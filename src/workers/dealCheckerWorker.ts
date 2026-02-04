@@ -68,8 +68,8 @@ const checkDealsAndCleanup = async (): Promise<void> => {
               `[Deal Checker] Deal confirmed for ${file.id}, cleaning up S3`
             );
 
-            // Mark as sent for deal
-            await markFileSentForDeal(file.id);
+            // Mark as sent for deal and set blockStatus from Filecoin deal status
+            await markFileSentForDeal(file.id, deal.dealStatus);
 
             // Delete from S3
             if (file.s3Key) {

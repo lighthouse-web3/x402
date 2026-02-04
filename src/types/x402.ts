@@ -146,15 +146,22 @@ export interface X402PaymentRecord {
 // Matches existing Lighthouse file schema
 // ============================================
 
-export type BlockStatus =
-  | "queued" // Uploaded to S3, waiting for IPFS
-  | "uploading" // Currently uploading to IPFS
-  | "uploaded" // Uploaded to IPFS
-  | "failed"; // Upload failed
+/** Pipeline stage: S3 → IPFS (our internal upload flow) */
+export type StorageStage =
+  | "queued" // In S3, waiting for IPFS worker
+  | "uploading" // S3 → IPFS in progress
+  | "uploaded" // On IPFS (CID set)
+  | "failed"; // Pipeline step failed
+
+/** Filecoin/deal block status (e.g. from Lighthouse deal_status). Optional until deal is known. */
+export type BlockStatus = "Active" | "Proving" | "Sealing" | string;
 
 export interface X402FileRecord {
   id: string; // Partition key (UUID)
-  blockStatus: BlockStatus; // Status of the file
+  /** Pipeline stage: queued → uploading → uploaded | failed */
+  storageStage: StorageStage;
+  /** Filecoin deal/block status (set when deal is known). Optional. */
+  blockStatus?: BlockStatus;
   cid?: string; // IPFS CID (set after upload)
   createdAt: string; // ISO timestamp
   dataPartition?: string; // Data partition info

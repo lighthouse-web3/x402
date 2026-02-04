@@ -165,7 +165,7 @@ Body: <binary file data>
 │                                                         │
 │  7. Create file record in DynamoDB                      │
 │     Table: x402-files                                   │
-│     blockStatus: "queued"                               │
+│     storageStage: "queued"                              │
 │     sentForDeal: false                                  │
 │                                                         │
 │  8. Return success response                             │
@@ -179,7 +179,8 @@ Body: <binary file data>
   "id": "file-uuid-123",
   "fileName": "myfile.pdf",
   "fileSizeInBytes": 1048576,
-  "blockStatus": "queued",
+  "storageStage": "queued",
+  "blockStatus": null,
   "sentForDeal": false,
   "s3Key": "uploads/abc123/1234567890-xyz-myfile.pdf",
   "createdAt": "2026-02-04T12:00:00.000Z",
@@ -203,17 +204,17 @@ Body: <binary file data>
 ┌─────────────────────────────────────────────────────────┐
 │  s3ToIpfsWorker (src/workers/s3ToIpfsWorker.ts)         │
 │                                                         │
-│  1. Query DynamoDB for files where blockStatus="queued" │
+│  1. Query DynamoDB for files where storageStage="queued"│
 │                                                         │
 │  2. For each file:                                      │
-│     a. Update blockStatus = "uploading"                 │
+│     a. Update storageStage = "uploading"                │
 │     b. Download from Wasabi S3                          │
 │     c. Upload to IPFS via Lighthouse SDK                │
 │     d. Get CID (Content Identifier)                     │
-│     e. Update blockStatus = "uploaded"                  │
+│     e. Update storageStage = "uploaded"                 │
 │     f. Store CID in database                            │
 │                                                         │
-│  On error: blockStatus = "failed"                       │
+│  On error: storageStage = "failed"                      │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -224,7 +225,7 @@ Body: <binary file data>
 │  dealCheckerWorker (src/workers/dealCheckerWorker.ts)   │
 │                                                         │
 │  1. Query DynamoDB for files where:                     │
-│     - blockStatus = "uploaded"                          │
+│     - storageStage = "uploaded"                         │
 │     - sentForDeal = false                               │
 │     - cid exists                                        │
 │                                                         │
@@ -235,7 +236,7 @@ Body: <binary file data>
 │     b. Check if deal is "Active" or "Proving"           │
 │                                                         │
 │     c. If deal confirmed:                               │
-│        - Set sentForDeal = true                         │
+│        - Set sentForDeal = true, blockStatus from API   │
 │        - Delete file from S3 (cleanup)                  │
 │        - Clear s3Key from database                      │
 └─────────────────────────────────────────────────────────┘
@@ -266,7 +267,8 @@ Body: <binary file data>
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | String (PK) | UUID |
-| `blockStatus` | String | queued/uploading/uploaded/failed |
+| `storageStage` | String | Pipeline: queued/uploading/uploaded/failed |
+| `blockStatus` | String (optional) | Filecoin deal status (e.g. Active, Proving) when deal confirmed |
 | `cid` | String | IPFS CID |
 | `createdAt` | String | ISO timestamp |
 | `encryption` | Boolean | Is file encrypted |
@@ -285,26 +287,33 @@ Body: <binary file data>
 ## File Status Lifecycle
 
 ```
-┌──────────┐     ┌───────────┐     ┌──────────┐     ┌─────────────┐
-│  queued  │ ──▶ │ uploading │ ──▶ │ uploaded │ ──▶ │ sentForDeal │
-└──────────┘     └───────────┘     └──────────┘     │   = true    │
-     │                │                  │          │ (S3 deleted)│
-     │                │                  │          └─────────────┘
-     │                ▼                  │
-     │           ┌────────┐              │
-     └─────────▶ │ failed │ ◀────────────┘
-                 └────────┘
+storageStage:  ┌──────────┐     ┌───────────┐     ┌──────────┐     ┌─────────────┐
+                │  queued  │ ──▶ │ uploading │ ──▶ │ uploaded │ ──▶ │ sentForDeal │
+                └──────────┘     └───────────┘     └──────────┘     │   = true    │
+                     │                │                  │          │ blockStatus │
+                     │                │                  │          │ set from API│
+                     │                ▼                  │          └─────────────┘
+                     │           ┌────────┐              │
+                     └─────────▶ │ failed │ ◀────────────┘
+                                 └────────┘
 ```
 
-### Status Descriptions
+### storageStage (pipeline)
 
-| Status | Description |
+| Stage | Description |
 |--------|-------------|
-| `queued` | File uploaded to S3, waiting for IPFS worker |
+| `queued` | File in S3, waiting for IPFS worker |
 | `uploading` | S3 → IPFS transfer in progress |
 | `uploaded` | File on IPFS, waiting for Filecoin deal |
-| `failed` | Any step failed |
-| `sentForDeal=true` | Filecoin deal confirmed, S3 file deleted |
+| `failed` | Pipeline step failed |
+
+### blockStatus (Filecoin)
+
+Optional. Set when deal is confirmed (e.g. `Active`, `Proving`). Comes from Lighthouse deal_status.
+
+### sentForDeal
+
+`true` = Filecoin deal confirmed, S3 file deleted.
 
 ---
 

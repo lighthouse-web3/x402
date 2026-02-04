@@ -100,6 +100,7 @@ export const x402_upload = async (
       id: fileRecord.id,
       fileName: fileRecord.fileName,
       fileSizeInBytes: fileRecord.fileSizeInBytes,
+      storageStage: fileRecord.storageStage,
       blockStatus: fileRecord.blockStatus,
       sentForDeal: fileRecord.sentForDeal,
       s3Key: fileRecord.s3Key,

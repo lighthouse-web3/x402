@@ -2,7 +2,7 @@ import ddbClient from "../db/ddbClient.js";
 import logger from "../../utils/logger.js";
 import config from "../../config/index.js";
 import CustomError from "../../middlewares/error/customError.js";
-import { X402FileRecord, BlockStatus } from "../../types/x402.js";
+import { X402FileRecord, StorageStage } from "../../types/x402.js";
 import crypto from "crypto";
 
 const TABLE_NAME = config.x402_files_table;
@@ -42,7 +42,7 @@ export const createFileRecord = async (fileInfo: {
 
   const fileRecord: X402FileRecord = {
     id,
-    blockStatus: "queued",
+    storageStage: "queued",
     cid: undefined,
     createdAt: now,
     dataPartition: fileInfo.dataPartition,
@@ -125,25 +125,25 @@ export const getFileByPaymentTxHash = async (
 };
 
 /**
- * Get all files with a specific blockStatus
+ * Get all files with a specific storageStage (pipeline: queued | uploading | uploaded | failed)
  */
 export const getFilesByStatus = async (
-  status: BlockStatus
+  stage: StorageStage
 ): Promise<X402FileRecord[]> => {
   try {
     const params = {
       TableName: TABLE_NAME,
-      FilterExpression: "blockStatus = :status",
+      FilterExpression: "storageStage = :stage",
       ExpressionAttributeValues: {
-        ":status": status,
+        ":stage": stage,
       },
     };
 
     const result = await ddbClient.scan(params);
     return (result.Items as X402FileRecord[]) || [];
   } catch (error) {
-    logger.error("Error getting files by status: " + error);
-    throw new CustomError(500, "Failed to get files by status");
+    logger.error("Error getting files by storage stage: " + error);
+    throw new CustomError(500, "Failed to get files by storage stage");
   }
 };
 
@@ -155,9 +155,9 @@ export const getFilesNotSentForDeal = async (): Promise<X402FileRecord[]> => {
     const params = {
       TableName: TABLE_NAME,
       FilterExpression:
-        "blockStatus = :status AND sentForDeal = :sentForDeal AND attribute_exists(cid)",
+        "storageStage = :stage AND sentForDeal = :sentForDeal AND attribute_exists(cid)",
       ExpressionAttributeValues: {
-        ":status": "uploaded",
+        ":stage": "uploaded",
         ":sentForDeal": false,
       },
     };
@@ -178,9 +178,9 @@ export const markFileUploading = async (id: string): Promise<void> => {
     const params = {
       TableName: TABLE_NAME,
       Key: { id },
-      UpdateExpression: "SET blockStatus = :status, lastUpdate = :lastUpdate",
+      UpdateExpression: "SET storageStage = :stage, lastUpdate = :lastUpdate",
       ExpressionAttributeValues: {
-        ":status": "uploading",
+        ":stage": "uploading",
         ":lastUpdate": getISOTimestamp(),
       },
     };
@@ -205,9 +205,9 @@ export const markFileUploaded = async (
       TableName: TABLE_NAME,
       Key: { id },
       UpdateExpression:
-        "SET blockStatus = :status, cid = :cid, lastUpdate = :lastUpdate",
+        "SET storageStage = :stage, cid = :cid, lastUpdate = :lastUpdate",
       ExpressionAttributeValues: {
-        ":status": "uploaded",
+        ":stage": "uploaded",
         ":cid": cid,
         ":lastUpdate": getISOTimestamp(),
       },
@@ -222,22 +222,33 @@ export const markFileUploaded = async (
 };
 
 /**
- * Mark file as sent for deal
+ * Mark file as sent for deal; optionally set blockStatus from Filecoin deal status
  */
-export const markFileSentForDeal = async (id: string): Promise<void> => {
+export const markFileSentForDeal = async (
+  id: string,
+  dealStatus?: string
+): Promise<void> => {
   try {
+    const updates = ["sentForDeal = :sentForDeal", "lastUpdate = :lastUpdate"];
+    const values: Record<string, unknown> = {
+      ":sentForDeal": true,
+      ":lastUpdate": getISOTimestamp(),
+    };
+    if (dealStatus) {
+      updates.push("blockStatus = :blockStatus");
+      values[":blockStatus"] = dealStatus;
+    }
     const params = {
       TableName: TABLE_NAME,
       Key: { id },
-      UpdateExpression: "SET sentForDeal = :sentForDeal, lastUpdate = :lastUpdate",
-      ExpressionAttributeValues: {
-        ":sentForDeal": true,
-        ":lastUpdate": getISOTimestamp(),
-      },
+      UpdateExpression: `SET ${updates.join(", ")}`,
+      ExpressionAttributeValues: values,
     };
 
     await ddbClient.update(params);
-    logger.info(`File ${id} marked as sent for deal`);
+    logger.info(
+      `File ${id} marked as sent for deal${dealStatus ? `, blockStatus=${dealStatus}` : ""}`
+    );
   } catch (error) {
     logger.error("Error marking file sent for deal: " + error);
     throw new CustomError(500, "Failed to update file deal status");
@@ -247,14 +258,17 @@ export const markFileSentForDeal = async (id: string): Promise<void> => {
 /**
  * Mark file as failed
  */
-export const markFileFailed = async (id: string, error?: string): Promise<void> => {
+export const markFileFailed = async (
+  id: string,
+  error?: string
+): Promise<void> => {
   try {
     const params = {
       TableName: TABLE_NAME,
       Key: { id },
-      UpdateExpression: "SET blockStatus = :status, lastUpdate = :lastUpdate",
+      UpdateExpression: "SET storageStage = :stage, lastUpdate = :lastUpdate",
       ExpressionAttributeValues: {
-        ":status": "failed",
+        ":stage": "failed",
         ":lastUpdate": getISOTimestamp(),
       },
     };
@@ -306,7 +320,10 @@ export const markFileDealDone = markFileSentForDeal;
 export const markS3Deleted = clearS3Key;
 
 /** @deprecated Use markFileSentForDeal */
-export const markFileDealPending = async (id: string, _dealId: string): Promise<void> => {
+export const markFileDealPending = async (
+  id: string,
+  _dealId: string
+): Promise<void> => {
   // Deal ID not stored in this schema, just mark as sent
   await markFileSentForDeal(id);
 };

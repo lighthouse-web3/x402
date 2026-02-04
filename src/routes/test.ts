@@ -44,6 +44,7 @@ router.get("/files", async (req, res) => {
         id: f.id,
         fileName: f.fileName,
         fileSizeInBytes: f.fileSizeInBytes,
+        storageStage: f.storageStage,
         blockStatus: f.blockStatus,
         cid: f.cid,
         sentForDeal: f.sentForDeal,

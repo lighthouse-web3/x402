@@ -24,7 +24,7 @@ const processQueuedFiles = async (): Promise<void> => {
   logger.info("[S3→IPFS Worker] Starting processing cycle");
 
   try {
-    // Get all files with blockStatus "queued"
+    // Get all files with storageStage "queued"
     const queuedFiles = await getFilesByStatus("queued");
 
     if (queuedFiles.length === 0) {
