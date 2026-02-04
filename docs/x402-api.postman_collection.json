@@ -1,0 +1,526 @@
+{
+  "info": {
+    "name": "x402 API",
+    "description": "x402 Payment API for Lighthouse File Uploads\n\nThis API enables pay-per-use file uploads using the x402 payment protocol.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "x402-api"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8005",
+      "type": "string"
+    },
+    {
+      "key": "recipientAddress",
+      "value": "0x4486f8AFE9554063056cFA204208EFf62dEAaa56",
+      "type": "string"
+    },
+    {
+      "key": "payerAddress",
+      "value": "0xa6F47836C431ffBb2346eeFdBa1Bd1d7382fD482",
+      "type": "string"
+    },
+    {
+      "key": "network",
+      "value": "eip155:84532",
+      "type": "string"
+    },
+    {
+      "key": "usdcAsset",
+      "value": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      "type": "string"
+    },
+    {
+      "key": "paymentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "paymentHeader",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "transactionHash",
+      "value": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Check if the API server is running"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "originalRequest": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/health",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["health"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "body": "OK"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Upload",
+      "item": [
+        {
+          "name": "Get Payment Requirements (402)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 402) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('paymentId', jsonData.payment_id);",
+                  "    ",
+                  "    // Auto-generate payment header",
+                  "    var payment = {",
+                  "        success: true,",
+                  "        transaction: pm.collectionVariables.get('transactionHash'),",
+                  "        network: pm.collectionVariables.get('network'),",
+                  "        payer: pm.collectionVariables.get('payerAddress'),",
+                  "        requirements: {",
+                  "            scheme: 'exact',",
+                  "            network: pm.collectionVariables.get('network'),",
+                  "            amount: jsonData.accepts[0].amount,",
+                  "            asset: pm.collectionVariables.get('usdcAsset'),",
+                  "            payTo: pm.collectionVariables.get('recipientAddress'),",
+                  "            maxTimeoutSeconds: 300,",
+                  "            payment_id: jsonData.payment_id",
+                  "        }",
+                  "    };",
+                  "    ",
+                  "    var paymentHeader = btoa(JSON.stringify(payment));",
+                  "    pm.collectionVariables.set('paymentHeader', paymentHeader);",
+                  "    ",
+                  "    console.log('Payment ID:', jsonData.payment_id);",
+                  "    console.log('Amount Required:', jsonData.accepts[0].amount);",
+                  "    console.log('Payment Header Generated');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream"
+              },
+              {
+                "key": "x-file-name",
+                "value": "test-file.txt"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "This is a test file content for x402 payment testing."
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/x402/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "x402", "upload"]
+            },
+            "description": "Request upload without X-PAYMENT header to get payment requirements.\n\nThis returns a 402 Payment Required response with:\n- payment_id: Unique ID for this payment request\n- accepts: Array of accepted payment schemes\n- resource: Information about the resource"
+          },
+          "response": [
+            {
+              "name": "402 Payment Required",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/octet-stream"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "test file content"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/x402/upload",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "x402", "upload"]
+                }
+              },
+              "status": "Payment Required",
+              "code": 402,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"x402Version\": 1,\n  \"payment_id\": \"e0a2e0c2-6703-4399-aa39-317e89bc1c19\",\n  \"error\": \"Payment required\",\n  \"resource\": {\n    \"url\": \"https://x402.lighthouse.storage/upload\",\n    \"description\": \"Create Filecoin Deal\"\n  },\n  \"accepts\": [\n    {\n      \"scheme\": \"exact\",\n      \"network\": \"eip155:84532\",\n      \"amount\": \"100\",\n      \"asset\": \"0x036CbD53842c5426634e7929541eC2318f3dCF7e\",\n      \"payTo\": \"0x4486f8AFE9554063056cFA204208EFf62dEAaa56\",\n      \"maxTimeoutSeconds\": 300\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Upload With Payment",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// If payment header is not set, generate one",
+                  "if (!pm.collectionVariables.get('paymentHeader')) {",
+                  "    var payment = {",
+                  "        success: true,",
+                  "        transaction: pm.collectionVariables.get('transactionHash'),",
+                  "        network: pm.collectionVariables.get('network'),",
+                  "        payer: pm.collectionVariables.get('payerAddress'),",
+                  "        requirements: {",
+                  "            scheme: 'exact',",
+                  "            network: pm.collectionVariables.get('network'),",
+                  "            amount: '100',",
+                  "            asset: pm.collectionVariables.get('usdcAsset'),",
+                  "            payTo: pm.collectionVariables.get('recipientAddress'),",
+                  "            maxTimeoutSeconds: 300,",
+                  "            payment_id: 'manual-test-' + Date.now()",
+                  "        }",
+                  "    };",
+                  "    ",
+                  "    var paymentHeader = btoa(JSON.stringify(payment));",
+                  "    pm.collectionVariables.set('paymentHeader', paymentHeader);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    console.log('Upload Success!');",
+                  "    console.log('File ID:', jsonData.fileId);",
+                  "    console.log('S3 URL:', jsonData.s3Url);",
+                  "    console.log('Status:', jsonData.status);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream"
+              },
+              {
+                "key": "x-file-name",
+                "value": "uploaded-file.txt"
+              },
+              {
+                "key": "X-PAYMENT",
+                "value": "{{paymentHeader}}",
+                "description": "Base64 encoded payment payload"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "This is the actual file content that will be uploaded to S3 and then processed for IPFS storage."
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/x402/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "x402", "upload"]
+            },
+            "description": "Upload a file with valid X-PAYMENT header.\n\nThe X-PAYMENT header should be a Base64-encoded JSON with:\n- success: true\n- transaction: The payment transaction hash\n- network: The blockchain network (eip155:84532)\n- payer: The payer's wallet address\n- requirements: Payment details including payment_id from 402 response"
+          },
+          "response": [
+            {
+              "name": "200 Upload Success",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/octet-stream"
+                  },
+                  {
+                    "key": "x-file-name",
+                    "value": "test.txt"
+                  },
+                  {
+                    "key": "X-PAYMENT",
+                    "value": "{{paymentHeader}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "test file content"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/x402/upload",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "x402", "upload"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"fileId\": \"a1b2c3d4-e5f6-7890-abcd-ef1234567890\",\n  \"fileName\": \"test.txt\",\n  \"fileSize\": 33,\n  \"s3Url\": \"http://localhost:4566/x402-uploads/uploads/...\",\n  \"status\": \"pending\",\n  \"message\": \"File uploaded to staging. IPFS upload will be processed shortly.\",\n  \"payment\": {\n    \"txHash\": \"0x1234567890abcdef\",\n    \"payment_id\": \"test-payment-123\",\n    \"amount\": \"100\",\n    \"payer\": \"0xa6F47836C431ffBb2346eeFdBa1Bd1d7382fD482\"\n  }\n}"
+            },
+            {
+              "name": "400 Invalid Payment",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/octet-stream"
+                  },
+                  {
+                    "key": "X-PAYMENT",
+                    "value": "invalid-header"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "test"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/x402/upload",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "x402", "upload"]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Invalid X-PAYMENT header format\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Retry Failed Upload",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream"
+              },
+              {
+                "key": "x-file-name",
+                "value": "retry-file.txt"
+              },
+              {
+                "key": "x-payment-tx-hash",
+                "value": "{{transactionHash}}",
+                "description": "Transaction hash from failed upload"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "This is the file content for retry upload."
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/x402/retry-upload?paymentTxHash={{transactionHash}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "x402", "retry-upload"],
+              "query": [
+                {
+                  "key": "paymentTxHash",
+                  "value": "{{transactionHash}}",
+                  "description": "Transaction hash from the original failed upload"
+                }
+              ]
+            },
+            "description": "Retry a failed upload using the original payment transaction hash.\n\nProvide the paymentTxHash either as:\n- Query parameter: ?paymentTxHash=0x...\n- Header: x-payment-tx-hash: 0x..."
+          },
+          "response": [
+            {
+              "name": "200 Retry Success",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"fileId\": \"new-file-id\",\n  \"fileName\": \"retry-file.txt\",\n  \"fileSize\": 42,\n  \"s3Url\": \"http://localhost:4566/x402-uploads/...\",\n  \"status\": \"pending\",\n  \"message\": \"File uploaded to staging. IPFS upload will be processed shortly.\"\n}"
+            },
+            {
+              "name": "404 Payment Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"error\": {\n    \"code\": 404,\n    \"message\": \"Payment not found. This payment transaction was not found in our records.\"\n  }\n}"
+            },
+            {
+              "name": "400 Payment Already Used",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Payment already used. This payment has already been used for a successful upload. CID: Qm...\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Upload Binary File",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream"
+              },
+              {
+                "key": "x-file-name",
+                "value": "document.pdf"
+              },
+              {
+                "key": "X-PAYMENT",
+                "value": "{{paymentHeader}}"
+              }
+            ],
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/x402/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "x402", "upload"]
+            },
+            "description": "Upload a binary file (PDF, image, etc.)\n\nSelect a file in the Body tab to upload."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Utilities",
+      "item": [
+        {
+          "name": "Generate Payment Header",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate a payment header for testing",
+                  "var payment = {",
+                  "    success: true,",
+                  "    transaction: pm.collectionVariables.get('transactionHash'),",
+                  "    network: pm.collectionVariables.get('network'),",
+                  "    payer: pm.collectionVariables.get('payerAddress'),",
+                  "    requirements: {",
+                  "        scheme: 'exact',",
+                  "        network: pm.collectionVariables.get('network'),",
+                  "        amount: '100',",
+                  "        asset: pm.collectionVariables.get('usdcAsset'),",
+                  "        payTo: pm.collectionVariables.get('recipientAddress'),",
+                  "        maxTimeoutSeconds: 300,",
+                  "        payment_id: 'test-' + Date.now()",
+                  "    }",
+                  "};",
+                  "",
+                  "var paymentHeader = btoa(JSON.stringify(payment));",
+                  "pm.collectionVariables.set('paymentHeader', paymentHeader);",
+                  "",
+                  "console.log('=== Generated Payment Header ===');",
+                  "console.log('Payment JSON:', JSON.stringify(payment, null, 2));",
+                  "console.log('Base64 Header:', paymentHeader);",
+                  "console.log('================================');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Utility request to generate a payment header.\n\nCheck the Postman Console (View > Show Postman Console) to see the generated header.\n\nThe header will be saved to the {{paymentHeader}} variable."
+          },
+          "response": []
+        },
+        {
+          "name": "Decode Payment Header",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Decode the current payment header",
+                  "var paymentHeader = pm.collectionVariables.get('paymentHeader');",
+                  "",
+                  "if (paymentHeader) {",
+                  "    try {",
+                  "        var decoded = atob(paymentHeader);",
+                  "        var payment = JSON.parse(decoded);",
+                  "        console.log('=== Decoded Payment Header ===');",
+                  "        console.log(JSON.stringify(payment, null, 2));",
+                  "        console.log('==============================');",
+                  "    } catch (e) {",
+                  "        console.log('Error decoding:', e.message);",
+                  "    }",
+                  "} else {",
+                  "    console.log('No payment header set. Run \"Get Payment Requirements\" first.');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Utility request to decode and view the current payment header.\n\nCheck the Postman Console to see the decoded JSON."
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [""]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [""]
+      }
+    }
+  ]
+}

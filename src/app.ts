@@ -8,6 +8,7 @@ import logger from './utils/logger.js'
 import errorHandler from './middlewares/error/index.js'
 
 import X402Router from './routes/x402.js'
+import TestRouter from './routes/test.js'
 
 const app: Application = express()
 app.use(bodyParser.urlencoded({ extended: false }))
@@ -28,6 +29,9 @@ app.get('/health', (req: Request, res: Response): void => {
 })
 
 app.use('/api/x402', X402Router)
+
+// Test routes (for development/testing only)
+app.use('/api/test', TestRouter)
 
 app.use(errorHandler)
 
