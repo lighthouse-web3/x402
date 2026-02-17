@@ -29,7 +29,9 @@
     "dotenv": "^16.6.1",
     "express": "^4.19.2",
     "file-type": "^21.3.0",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "winston": "^3.19.0",
+    "winston-transport": "^4.9.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
