@@ -27,10 +27,9 @@ export async function createFileRecord(
   fileCid: string,
   fileSizeBytes: number,
   fileName: string,
-  mimeType: string,
-  txHash: string
+  mimeType: string
 ): Promise<FileRecord> {
-  const fileRecord = {
+  const fileRecord: FileRecord = {
     id: uuidv4(),
     publicKey: publicKey.toLowerCase(),
     createdAt: Date.now(),
@@ -40,7 +39,7 @@ export async function createFileRecord(
     updatedAt: Date.now(),
     dataPartition: todayPartition(),
     mimeType: mimeType,
-    txHash: txHash,
+    txHash: "",
   };
 
   await putFileRecord(fileRecord);

@@ -1,4 +1,4 @@
-import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import docClient from "./client.js";
 import config from "../config.js";
 import logger from "../utils/logger.js";
@@ -13,6 +13,29 @@ export async function putFileRecord(record: FileRecord): Promise<void> {
     })
   );
   logger.debug("File record saved", { id: record.id });
+}
+
+export async function updateFileRecordTxHash(
+  publicKey: string,
+  recordId: string,
+  txHash: string
+): Promise<void> {
+  logger.debug("Updating file record with tx hash", { publicKey, recordId, txHash });
+  await docClient.send(
+    new UpdateCommand({
+      TableName: config.fileRecordTable,
+      Key: {
+        publicKey: publicKey.toLowerCase(),
+        id: recordId,
+      },
+      UpdateExpression: "SET txHash = :tx, updatedAt = :now",
+      ExpressionAttributeValues: {
+        ":tx": txHash,
+        ":now": Date.now(),
+      },
+    })
+  );
+  logger.debug("File record tx hash updated", { recordId, txHash });
 }
 
 export async function getFileRecordsByPublicKey(publicKey: string): Promise<FileRecord[]> {

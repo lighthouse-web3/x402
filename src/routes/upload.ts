@@ -13,6 +13,7 @@ import config from "../config.js";
 import logger from "../utils/logger.js";
 import { calculatePrice } from "../utils/pricing.js";
 import { createFileRecord } from "../utils/fileRecord.js";
+import { updateFileRecordTxHash } from "../db/fileRecord.js";
 import { uploadToLighthouse } from "../services/lighthouse.js";
 
 const network = config.network as Network;
@@ -31,6 +32,50 @@ const resourceServer = new x402ResourceServer(facilitatorClient).register(
   network,
   new ExactEvmScheme()
 );
+
+// Map payer address → file record ID so the settlement hook can update the DB
+// with the real tx hash (which only exists after the facilitator settles on-chain).
+const pendingSettlements = new Map<string, { recordId: string; publicKey: string }>();
+
+resourceServer.onAfterSettle(async (context) => {
+  const payer =
+    (context.result.payer as string | undefined) ||
+    (context.paymentPayload.payload as Record<string, Record<string, string>>)?.authorization
+      ?.from ||
+    (context.paymentPayload.payload as Record<string, Record<string, string>>)?.permit2Authorization
+      ?.from ||
+    "";
+
+  const txHash = context.result.transaction || "";
+  const payerKey = payer.toLowerCase();
+
+  logger.info("Payment settled on-chain", {
+    payer,
+    txHash,
+    success: context.result.success,
+    network: context.requirements.network,
+  });
+
+  const pending = pendingSettlements.get(payerKey);
+  if (pending && txHash) {
+    try {
+      await updateFileRecordTxHash(pending.publicKey, pending.recordId, txHash);
+      logger.info("File record updated with tx hash", {
+        recordId: pending.recordId,
+        txHash,
+      });
+    } catch (err) {
+      logger.error("Failed to update file record with tx hash", {
+        recordId: pending.recordId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      pendingSettlements.delete(payerKey);
+    }
+  } else if (!pending) {
+    logger.warn("Settlement completed but no pending file record found", { payer, txHash });
+  }
+});
 
 export const x402Middleware = paymentMiddleware(
   {
@@ -124,17 +169,23 @@ export const uploadHandler = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    // 4. Extract wallet address and tx hash from payment header
+    // 4. Extract wallet address from payment header
+    //    Note: The PAYMENT-SIGNATURE header contains an off-chain signed
+    //    authorization (EIP-3009 / Permit2), NOT a transaction hash.
+    //    The real on-chain tx hash is created during settlement, which
+    //    happens AFTER this handler completes. The onAfterSettle hook
+    //    updates the DB record with the real tx hash.
     let walletAddress = "unknown";
-    let txHash = "";
     const paymentHeader = req.header("payment-signature") || req.header("x-payment");
     if (paymentHeader) {
       logger.debug("Payment header present, decoding payer info");
       try {
         const decoded = JSON.parse(Buffer.from(paymentHeader, "base64").toString());
-        walletAddress = decoded.payer || decoded.payload?.authorization?.from || "unknown";
-        txHash = decoded.transaction || decoded.payload?.authorization?.signature || "";
-        logger.info("Payment verified", { walletAddress, txHash: txHash.substring(0, 20) + "…" });
+        walletAddress =
+          decoded.payload?.authorization?.from ||
+          decoded.payload?.permit2Authorization?.from ||
+          "unknown";
+        logger.info("Payment authorization from payer", { walletAddress });
       } catch (err) {
         logger.warn("Failed to decode payment header (already verified by middleware)", {
           error: err instanceof Error ? err.message : String(err),
@@ -164,16 +215,23 @@ export const uploadHandler = async (req: Request, res: Response): Promise<void> 
     // 7. Clean up temp file
     await cleanupFile(tempPath);
 
-    // 8. Create user record
+    // 8. Create user record (txHash is empty — updated by onAfterSettle hook)
     logger.debug("Creating file record in DynamoDB", { walletAddress, cid: result.cid });
     const fileRecord = await createFileRecord(
       walletAddress,
       result.cid,
       actualSize,
       fileName,
-      mimeType,
-      txHash
+      mimeType
     );
+
+    // Register so the onAfterSettle hook can update this record with the real tx hash
+    if (walletAddress !== "unknown") {
+      pendingSettlements.set(walletAddress.toLowerCase(), {
+        recordId: fileRecord.id,
+        publicKey: fileRecord.publicKey,
+      });
+    }
 
     // 9. Return CID
     logger.info("Upload complete — returning response", {
