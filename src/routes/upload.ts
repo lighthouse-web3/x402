@@ -1,9 +1,5 @@
 import { Request, Response } from "express";
-import {
-  paymentMiddleware,
-  x402ResourceServer,
-  Network,
-} from "@x402/express";
+import { paymentMiddleware, x402ResourceServer, Network } from "@x402/express";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { createWriteStream } from "fs";
@@ -38,9 +34,7 @@ export const x402Middleware = paymentMiddleware(
           network,
           payTo: config.recipientAddress,
           price: (ctx) => {
-            const contentLength = parseInt(
-              ctx.adapter.getHeader("content-length") || "0"
-            );
+            const contentLength = parseInt(ctx.adapter.getHeader("content-length") || "0");
             return calculatePrice(contentLength);
           },
         },
@@ -64,17 +58,12 @@ async function cleanupFile(filePath: string): Promise<void> {
   }
 }
 
-export const uploadHandler = async (
-  req: Request,
-  res: Response
-): Promise<void> => {
+export const uploadHandler = async (req: Request, res: Response): Promise<void> => {
   const tempPath = tempFilePath();
 
   try {
     // 1. Require Content-Length (needed for accurate pricing)
-    const declaredSize = parseInt(
-      (req.headers["content-length"] as string) || "0"
-    );
+    const declaredSize = parseInt((req.headers["content-length"] as string) || "0");
     if (declaredSize <= 0) {
       res.status(400).json({
         error: "Content-Length header is required",
@@ -124,35 +113,26 @@ export const uploadHandler = async (
     // 4. Extract wallet address and tx hash from payment header
     let walletAddress = "unknown";
     let txHash = "";
-    const paymentHeader =
-      req.header("payment-signature") || req.header("x-payment");
+    const paymentHeader = req.header("payment-signature") || req.header("x-payment");
     if (paymentHeader) {
       try {
-        const decoded = JSON.parse(
-          Buffer.from(paymentHeader, "base64").toString()
-        );
-        walletAddress =
-          decoded.payer ||
-          decoded.payload?.authorization?.from ||
-          "unknown";
-        txHash =
-          decoded.transaction ||
-          decoded.payload?.authorization?.signature ||
-          "";
+        const decoded = JSON.parse(Buffer.from(paymentHeader, "base64").toString());
+        walletAddress = decoded.payer || decoded.payload?.authorization?.from || "unknown";
+        txHash = decoded.transaction || decoded.payload?.authorization?.signature || "";
       } catch {
         // already verified by middleware
       }
     }
 
     // 5. Determine file name
-    const fileName =
-      (req.headers["x-file-name"] as string) || `upload-${Date.now()}.bin`;
+    const fileName = (req.headers["x-file-name"] as string) || `upload-${Date.now()}.bin`;
 
     // 5b. Detect MIME type from temp file (magic bytes)
     const typeResult = await fileTypeFromFile(tempPath);
-    const mimeType = typeResult?.mime
-      ?? (req.headers["content-type"] as string | undefined)
-      ?? "application/octet-stream";
+    const mimeType =
+      typeResult?.mime ??
+      (req.headers["content-type"] as string | undefined) ??
+      "application/octet-stream";
 
     // 6. Upload to Lighthouse directly from temp file (no memory copy)
     console.log(`[Upload] ${fileName} (${actualSize} bytes) → Lighthouse…`);
@@ -163,7 +143,14 @@ export const uploadHandler = async (
     await cleanupFile(tempPath);
 
     // 8. Create user record
-    const fileRecord = await createFileRecord(walletAddress, result.cid, actualSize, fileName, mimeType, txHash);
+    const fileRecord = await createFileRecord(
+      walletAddress,
+      result.cid,
+      actualSize,
+      fileName,
+      mimeType,
+      txHash
+    );
 
     // 9. Return CID
     res.json({

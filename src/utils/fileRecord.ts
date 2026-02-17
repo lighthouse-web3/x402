@@ -1,5 +1,5 @@
-import { v4 as uuidv4 } from 'uuid';
-import { putFileRecord } from '../db/fileRecord.js';
+import { v4 as uuidv4 } from "uuid";
+import { putFileRecord } from "../db/fileRecord.js";
 
 export interface FileRecord {
   id: string;
@@ -22,7 +22,14 @@ function todayPartition(): string {
   return `${dd}/${mm}/${yyyy}`;
 }
 
-export async function createFileRecord(publicKey: string, fileCid: string, fileSizeBytes: number, fileName: string, mimeType: string, txHash: string): Promise<FileRecord> {
+export async function createFileRecord(
+  publicKey: string,
+  fileCid: string,
+  fileSizeBytes: number,
+  fileName: string,
+  mimeType: string,
+  txHash: string
+): Promise<FileRecord> {
   const fileRecord = {
     id: uuidv4(),
     publicKey: publicKey.toLowerCase(),

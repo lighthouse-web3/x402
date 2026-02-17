@@ -6,8 +6,7 @@ const config = {
   lighthouseApiKey: process.env.LIGHTHOUSE_API_KEY || "",
   recipientAddress: process.env.RECIPIENT_ADDRESS || "",
   network: process.env.NETWORK || "eip155:84532", // Base Sepolia testnet
-  facilitatorUrl:
-    process.env.FACILITATOR_URL || "https://www.x402.org/facilitator",
+  facilitatorUrl: process.env.FACILITATOR_URL || "https://www.x402.org/facilitator",
   pricePerMb: parseFloat(process.env.PRICE_PER_MB || "0.004"),
   facilitatorFee: parseFloat(process.env.FACILITATOR_FEE || "0.001"),
   maxFileSizeBytes: parseInt(process.env.MAX_FILE_SIZE_BYTES || "1073741824"), // 1GB

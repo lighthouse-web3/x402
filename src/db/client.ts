@@ -5,8 +5,8 @@ import config from "../config.js";
 const client = new DynamoDBClient({
   region: config.awsRegion,
   credentials: {
-    accessKeyId: config.aws_access_key_id ?? '',
-    secretAccessKey: config.aws_secret_access_key ?? '',
+    accessKeyId: config.aws_access_key_id ?? "",
+    secretAccessKey: config.aws_secret_access_key ?? "",
   },
 });
 
