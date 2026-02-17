@@ -5,7 +5,7 @@ import logger from "../utils/logger.js";
 import { FileRecord } from "../utils/fileRecord.js";
 
 export async function putFileRecord(record: FileRecord): Promise<void> {
-  logger.debug("Saving file record to DynamoDB", { id: record.id, cid: record.fileCid });
+  logger.debug("Saving file record to DynamoDB", { id: record.id, cid: record.cid });
   await docClient.send(
     new PutCommand({
       TableName: config.fileRecordTable,

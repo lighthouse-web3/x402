@@ -4,7 +4,7 @@ import { putFileRecord } from "../db/fileRecord.js";
 export interface FileRecord {
   id: string;
   publicKey: string;
-  fileCid: string;
+  cid: string;
   fileSizeInBytes: number;
   fileName: string;
   createdAt: number;
@@ -24,7 +24,7 @@ function todayPartition(): string {
 
 export async function createFileRecord(
   publicKey: string,
-  fileCid: string,
+  cid: string,
   fileSizeBytes: number,
   fileName: string,
   mimeType: string
@@ -33,7 +33,7 @@ export async function createFileRecord(
     id: uuidv4(),
     publicKey: publicKey.toLowerCase(),
     createdAt: Date.now(),
-    fileCid: fileCid,
+    cid: cid,
     fileSizeInBytes: fileSizeBytes,
     fileName: fileName,
     updatedAt: Date.now(),
