@@ -181,11 +181,13 @@ export const priceHandler = (req: Request, res: Response): void => {
   }
 
   const price = calculatePrice(size);
-  const sizeMB = size / (1024 * 1024);
+  const rawMB = size / (1024 * 1024);
+  const billableMB = Math.max(rawMB, 1);
 
   res.json({
     fileSizeBytes: size,
-    fileSizeMB: parseFloat(sizeMB.toFixed(4)),
+    fileSizeMB: parseFloat(rawMB.toFixed(4)),
+    billableMB: parseFloat(billableMB.toFixed(4)),
     pricePerMB: `$${config.pricePerMb}`,
     totalPrice: price,
     network: config.network,

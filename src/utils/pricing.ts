@@ -1,9 +1,9 @@
 import config from "../config.js";
 
-const MINIMUM_PRICE = 0.001;
+const MIN_BILLABLE_MB = 1;
 
 export function calculatePrice(fileSizeBytes: number): string {
-  const fileSizeMB = fileSizeBytes / (1024 * 1024);
-  const priceUSD = Math.max(fileSizeMB * config.pricePerMb + config.facilitatorFee, MINIMUM_PRICE);
+  const fileSizeMB = Math.max(fileSizeBytes / (1024 * 1024), MIN_BILLABLE_MB);
+  const priceUSD = fileSizeMB * config.pricePerMb + config.facilitatorFee;
   return `$${priceUSD.toFixed(6)}`;
 }
