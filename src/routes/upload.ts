@@ -59,7 +59,7 @@ resourceServer.onAfterSettle(async (context) => {
   const pending = pendingSettlements.get(payerKey);
   if (pending && txHash) {
     try {
-      await updateFileRecordTxHash(pending.publicKey, pending.recordId, txHash);
+      await updateFileRecordTxHash(pending.recordId, txHash);
       logger.info("File record updated with tx hash", {
         recordId: pending.recordId,
         txHash,
