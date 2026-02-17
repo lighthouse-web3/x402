@@ -1,9 +1,11 @@
 import app from "./app.js";
 import config from "./config.js";
+import logger from "./utils/logger.js";
 
 app.listen(config.port, () => {
-  console.log(`\nx402 Lighthouse Upload API running on http://localhost:${config.port}`);
-  console.log(`  Network:   ${config.network}`);
-  console.log(`  Recipient: ${config.recipientAddress}`);
-  console.log(`  Price:     $${config.pricePerMb} / MB\n`);
+  logger.info(`x402 Lighthouse Upload API running on http://localhost:${config.port}`);
+  logger.info(`Network: ${config.network}`);
+  logger.info(`Recipient: ${config.recipientAddress}`);
+  logger.info(`Price: $${config.pricePerMb} / MB`);
+  logger.info(`Log level: ${config.logLevel}`);
 });

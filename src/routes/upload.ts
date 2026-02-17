@@ -10,11 +10,18 @@ import { tmpdir } from "os";
 import crypto from "crypto";
 import { fileTypeFromFile } from "file-type";
 import config from "../config.js";
+import logger from "../utils/logger.js";
 import { calculatePrice } from "../utils/pricing.js";
 import { createFileRecord } from "../utils/fileRecord.js";
 import { uploadToLighthouse } from "../services/lighthouse.js";
 
 const network = config.network as Network;
+
+logger.info("Initializing x402 payment middleware", {
+  network,
+  facilitatorUrl: config.facilitatorUrl,
+  recipientAddress: config.recipientAddress,
+});
 
 const facilitatorClient = new HTTPFacilitatorClient({
   url: config.facilitatorUrl,
@@ -35,7 +42,9 @@ export const x402Middleware = paymentMiddleware(
           payTo: config.recipientAddress,
           price: (ctx) => {
             const contentLength = parseInt(ctx.adapter.getHeader("content-length") || "0");
-            return calculatePrice(contentLength);
+            const price = calculatePrice(contentLength);
+            logger.debug("Calculated upload price", { contentLength, price });
+            return price;
           },
         },
       ],
@@ -65,6 +74,7 @@ export const uploadHandler = async (req: Request, res: Response): Promise<void> 
     // 1. Require Content-Length (needed for accurate pricing)
     const declaredSize = parseInt((req.headers["content-length"] as string) || "0");
     if (declaredSize <= 0) {
+      logger.warn("Upload rejected: missing Content-Length header");
       res.status(400).json({
         error: "Content-Length header is required",
       });
@@ -73,6 +83,10 @@ export const uploadHandler = async (req: Request, res: Response): Promise<void> 
 
     if (declaredSize > config.maxFileSizeBytes) {
       const maxMB = Math.round(config.maxFileSizeBytes / (1024 * 1024));
+      logger.warn("Upload rejected: file too large", {
+        declaredSize,
+        maxBytes: config.maxFileSizeBytes,
+      });
       res.status(400).json({
         error: `File exceeds maximum size of ${maxMB} MB`,
       });
@@ -115,13 +129,21 @@ export const uploadHandler = async (req: Request, res: Response): Promise<void> 
     let txHash = "";
     const paymentHeader = req.header("payment-signature") || req.header("x-payment");
     if (paymentHeader) {
+      logger.debug("Payment header present, decoding payer info");
       try {
         const decoded = JSON.parse(Buffer.from(paymentHeader, "base64").toString());
         walletAddress = decoded.payer || decoded.payload?.authorization?.from || "unknown";
         txHash = decoded.transaction || decoded.payload?.authorization?.signature || "";
-      } catch {
-        // already verified by middleware
+        logger.info("Payment verified", { walletAddress, txHash: txHash.substring(0, 20) + "…" });
+      } catch (err) {
+        logger.warn("Failed to decode payment header (already verified by middleware)", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
+    } else {
+      logger.warn(
+        "No payment header found on upload request — this should not happen after x402 middleware"
+      );
     }
 
     // 5. Determine file name
@@ -135,14 +157,15 @@ export const uploadHandler = async (req: Request, res: Response): Promise<void> 
       "application/octet-stream";
 
     // 6. Upload to Lighthouse directly from temp file (no memory copy)
-    console.log(`[Upload] ${fileName} (${actualSize} bytes) → Lighthouse…`);
+    logger.info("Uploading file to Lighthouse", { fileName, fileSizeBytes: actualSize });
     const result = await uploadToLighthouse(tempPath);
-    console.log(`[Upload] Done — CID: ${result.cid}`);
+    logger.info("Lighthouse upload complete", { fileName, cid: result.cid });
 
     // 7. Clean up temp file
     await cleanupFile(tempPath);
 
     // 8. Create user record
+    logger.debug("Creating file record in DynamoDB", { walletAddress, cid: result.cid });
     const fileRecord = await createFileRecord(
       walletAddress,
       result.cid,
@@ -153,6 +176,12 @@ export const uploadHandler = async (req: Request, res: Response): Promise<void> 
     );
 
     // 9. Return CID
+    logger.info("Upload complete — returning response", {
+      cid: result.cid,
+      fileName,
+      fileSizeBytes: actualSize,
+      walletAddress,
+    });
     res.json({
       success: true,
       cid: result.cid,
@@ -165,7 +194,7 @@ export const uploadHandler = async (req: Request, res: Response): Promise<void> 
   } catch (error: unknown) {
     await cleanupFile(tempPath);
     const message = error instanceof Error ? error.message : "Upload failed";
-    console.error("[Upload] Error:", message);
+    logger.error("Upload failed", { error: message });
     res.status(500).json({ error: "Upload failed", message });
   }
 };
