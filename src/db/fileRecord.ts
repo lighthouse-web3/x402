@@ -15,17 +15,12 @@ export async function putFileRecord(record: FileRecord): Promise<void> {
   logger.debug("File record saved", { id: record.id });
 }
 
-export async function updateFileRecordTxHash(
-  publicKey: string,
-  recordId: string,
-  txHash: string
-): Promise<void> {
-  logger.debug("Updating file record with tx hash", { publicKey, recordId, txHash });
+export async function updateFileRecordTxHash(recordId: string, txHash: string): Promise<void> {
+  logger.debug("Updating file record with tx hash", { recordId, txHash });
   await docClient.send(
     new UpdateCommand({
       TableName: config.fileRecordTable,
       Key: {
-        publicKey: publicKey.toLowerCase(),
         id: recordId,
       },
       UpdateExpression: "SET txHash = :tx, updatedAt = :now",
