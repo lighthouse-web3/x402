@@ -19,6 +19,8 @@ const config = {
   recipientAddress: process.env.RECIPIENT_ADDRESS || "",
   network: process.env.NETWORK || "eip155:84532", // Base Sepolia testnet
   facilitatorUrl: process.env.FACILITATOR_URL || "https://www.x402.org/facilitator",
+  cdpApiKeyId: process.env.CDP_API_KEY_ID || "",
+  cdpApiKeySecret: process.env.CDP_API_KEY_SECRET || "",
   pricePerMb: parseFloat(process.env.PRICE_PER_MB || "0.004"),
   facilitatorFee: parseFloat(process.env.FACILITATOR_FEE || "0.001"),
   maxFileSizeBytes: parseInt(process.env.MAX_FILE_SIZE_BYTES || "1073741824"), // 1GB

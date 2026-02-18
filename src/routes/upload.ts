@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { paymentMiddleware, x402ResourceServer, Network } from "@x402/express";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
+import { generateJwt } from "@coinbase/cdp-sdk/auth";
 import { createWriteStream } from "fs";
 import { stat, unlink } from "fs/promises";
 import { pipeline } from "stream/promises";
@@ -24,8 +25,30 @@ logger.info("Initializing x402 payment middleware", {
   recipientAddress: config.recipientAddress,
 });
 
+const useCdpAuth = !!(config.cdpApiKeyId && config.cdpApiKeySecret);
+
+async function cdpCreateAuthHeaders() {
+  const makeBearerHeader = async (method: string, path: string) => {
+    const jwt = await generateJwt({
+      apiKeyId: config.cdpApiKeyId,
+      apiKeySecret: config.cdpApiKeySecret,
+      requestMethod: method,
+      requestHost: "api.cdp.coinbase.com",
+      requestPath: `/platform/v2/x402/${path}`,
+    });
+    return { Authorization: `Bearer ${jwt}` } as Record<string, string>;
+  };
+
+  return {
+    verify: await makeBearerHeader("POST", "verify"),
+    settle: await makeBearerHeader("POST", "settle"),
+    supported: await makeBearerHeader("GET", "supported"),
+  };
+}
+
 const facilitatorClient = new HTTPFacilitatorClient({
   url: config.facilitatorUrl,
+  ...(useCdpAuth && { createAuthHeaders: cdpCreateAuthHeaders }),
 });
 
 const resourceServer = new x402ResourceServer(facilitatorClient).register(
