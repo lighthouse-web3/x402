@@ -1,35 +1,30 @@
-import express, { Request, Response, Application } from 'express'
-import cors from 'cors'
-import morgan from 'morgan'
-import bodyParser from 'body-parser'
-import expressWinston from 'express-winston'
+import express, { Request, Response, NextFunction } from "express";
+import cors from "cors";
+import logger from "./utils/logger.js";
+import { x402Middleware, uploadHandler, priceHandler } from "./routes/upload.js";
 
-import logger from './utils/logger.js'
-import errorHandler from './middlewares/error/index.js'
+const app = express();
+app.use(cors());
 
-import X402Router from './routes/x402.js'
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    logger.info(`${req.method} ${req.originalUrl} ${res.statusCode}`, {
+      method: req.method,
+      url: req.originalUrl,
+      status: res.statusCode,
+      durationMs: duration,
+    });
+  });
+  next();
+});
 
-const app: Application = express()
-app.use(bodyParser.urlencoded({ extended: false }))
+app.get("/health", (_req: Request, res: Response) => {
+  res.send("OK");
+});
 
-app.use(bodyParser.json())
+app.get("/api/upload/price", priceHandler);
+app.post("/api/upload", x402Middleware, uploadHandler);
 
-app.use(
-  expressWinston.errorLogger({
-    winstonInstance: logger,
-  }),
-)
-
-app.use(morgan('dev'))
-app.use(cors())
-
-app.get('/health', (req: Request, res: Response): void => {
-  res.status(200).send('OK')
-})
-
-app.use('/api/x402', X402Router)
-
-app.use(errorHandler)
-
-export default app
-
+export default app;

@@ -5,7 +5,6 @@
     "outDir": "./dist",
     "baseUrl": ".",
     "esModuleInterop": true,
-    "types": ["node", "express"],
     "sourceMap": true,
     "skipLibCheck": true,
     "strict": true,
@@ -16,4 +15,3 @@
     "experimentalSpecifierResolution": "node"
   }
 }
-
