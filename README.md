@@ -1,6 +1,6 @@
 # x402 Lighthouse Upload API
 
-Pay-per-use file upload to [Lighthouse](https://www.lighthouse.storage/) IPFS storage, powered by the [x402](https://docs.cdp.coinbase.com/x402/quickstart-for-sellers) payment protocol. Users pay **$0.004 per MB** in USDC on Base and receive an IPFS CID in return.
+Pay-per-use file upload to [Lighthouse](https://www.lighthouse.storage/) IPFS storage, powered by the [x402](https://docs.cdp.coinbase.com/x402/quickstart-for-sellers) payment protocol. Users pay **$0.004 per MB** in USDC on Base and receive an IPFS CID and stored on IPFS and Filecoin.
 
 ## How It Works
 
