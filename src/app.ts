@@ -4,7 +4,18 @@ import logger from "./utils/logger.js";
 import { x402Middleware, uploadHandler, priceHandler } from "./routes/upload.js";
 
 const app = express();
-app.use(cors());
+
+const X402_EXPOSED_HEADERS = [
+  "PAYMENT-REQUIRED",
+  "PAYMENT-RESPONSE",
+  "X-PAYMENT-RESPONSE",
+] as const;
+
+app.use(
+  cors({
+    exposedHeaders: [...X402_EXPOSED_HEADERS],
+  })
+);
 
 app.use((req: Request, res: Response, next: NextFunction) => {
   const start = Date.now();
