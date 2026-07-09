@@ -1,8 +1,4 @@
 import { Request, Response } from "express";
-import { paymentMiddleware, x402ResourceServer, Network } from "@x402/express";
-import { ExactEvmScheme } from "@x402/evm/exact/server";
-import { HTTPFacilitatorClient } from "@x402/core/server";
-import { generateJwt } from "@coinbase/cdp-sdk/auth";
 import { createWriteStream } from "fs";
 import { stat, unlink } from "fs/promises";
 import { pipeline } from "stream/promises";
@@ -12,116 +8,34 @@ import crypto from "crypto";
 import { fileTypeFromFile } from "file-type";
 import config from "../config.js";
 import logger from "../utils/logger.js";
-import { calculatePrice } from "../utils/pricing.js";
+import { calculatePrice, calculatePriceQuote } from "../utils/pricing.js";
 import { createFileRecord } from "../utils/fileRecord.js";
-import { updateFileRecordTxHash } from "../db/fileRecord.js";
+import { getPayerFromRequest } from "../utils/paymentHeader.js";
 import { uploadToLighthouse } from "../services/lighthouse.js";
+import { createPaymentMiddleware, network, pendingSettlements } from "../payments/server.js";
 
-const network = config.network as Network;
-
-logger.info("Initializing x402 payment middleware", {
-  network,
-  facilitatorUrl: config.facilitatorUrl,
-  recipientAddress: config.recipientAddress,
-});
-
-const useCdpAuth = !!(config.cdpApiKeyId && config.cdpApiKeySecret);
-
-async function cdpCreateAuthHeaders() {
-  const makeBearerHeader = async (method: string, path: string) => {
-    const jwt = await generateJwt({
-      apiKeyId: config.cdpApiKeyId,
-      apiKeySecret: config.cdpApiKeySecret,
-      requestMethod: method,
-      requestHost: "api.cdp.coinbase.com",
-      requestPath: `/platform/v2/x402/${path}`,
-    });
-    return { Authorization: `Bearer ${jwt}` } as Record<string, string>;
-  };
-
-  return {
-    verify: await makeBearerHeader("POST", "verify"),
-    settle: await makeBearerHeader("POST", "settle"),
-    supported: await makeBearerHeader("GET", "supported"),
-  };
-}
-
-const facilitatorClient = new HTTPFacilitatorClient({
-  url: config.facilitatorUrl,
-  ...(useCdpAuth && { createAuthHeaders: cdpCreateAuthHeaders }),
-});
-
-const resourceServer = new x402ResourceServer(facilitatorClient).register(
-  network,
-  new ExactEvmScheme()
-);
-
-// Map payer address → file record ID so the settlement hook can update the DB
-// with the real tx hash (which only exists after the facilitator settles on-chain).
-const pendingSettlements = new Map<string, { recordId: string; publicKey: string }>();
-
-resourceServer.onAfterSettle(async (context) => {
-  const payer =
-    (context.result.payer as string | undefined) ||
-    (context.paymentPayload.payload as Record<string, Record<string, string>>)?.authorization
-      ?.from ||
-    (context.paymentPayload.payload as Record<string, Record<string, string>>)?.permit2Authorization
-      ?.from ||
-    "";
-
-  const txHash = context.result.transaction || "";
-  const payerKey = payer.toLowerCase();
-
-  logger.info("Payment settled on-chain", {
-    payer,
-    txHash,
-    success: context.result.success,
-    network: context.requirements.network,
-  });
-
-  const pending = pendingSettlements.get(payerKey);
-  if (pending && txHash) {
-    try {
-      await updateFileRecordTxHash(pending.recordId, txHash);
-      logger.info("File record updated with tx hash", {
-        recordId: pending.recordId,
-        txHash,
-      });
-    } catch (err) {
-      logger.error("Failed to update file record with tx hash", {
-        recordId: pending.recordId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      pendingSettlements.delete(payerKey);
-    }
-  } else if (!pending) {
-    logger.warn("Settlement completed but no pending file record found", { payer, txHash });
-  }
-});
-
-export const x402Middleware = paymentMiddleware(
-  {
-    "POST /api/upload": {
-      accepts: [
-        {
-          scheme: "exact",
-          network,
-          payTo: config.recipientAddress,
-          price: (ctx) => {
-            const contentLength = parseInt(ctx.adapter.getHeader("content-length") || "0");
-            const price = calculatePrice(contentLength);
-            logger.debug("Calculated upload price", { contentLength, price });
-            return price;
-          },
+export const x402UploadMiddleware = createPaymentMiddleware({
+  "POST /api/upload": {
+    accepts: [
+      {
+        scheme: "exact",
+        network,
+        payTo: config.recipientAddress,
+        price: (ctx: { adapter: { getHeader: (name: string) => string | undefined } }) => {
+          const contentLength = parseInt(ctx.adapter.getHeader("content-length") || "0");
+          const price = calculatePrice(contentLength);
+          logger.debug("Calculated upload price", { contentLength, price });
+          return price;
         },
-      ],
-      description: "Upload file to Lighthouse IPFS storage",
-      mimeType: "application/json",
-    },
+      },
+    ],
+    description: "Upload file to Lighthouse IPFS storage (first year included)",
+    mimeType: "application/json",
   },
-  resourceServer
-);
+});
+
+// Back-compat alias used by app.ts historically
+export const x402Middleware = x402UploadMiddleware;
 
 function tempFilePath(): string {
   return join(tmpdir(), `lh-upload-${crypto.randomBytes(8).toString("hex")}`);
@@ -193,31 +107,9 @@ export const uploadHandler = async (req: Request, res: Response): Promise<void> 
     }
 
     // 4. Extract wallet address from payment header
-    //    Note: The PAYMENT-SIGNATURE header contains an off-chain signed
-    //    authorization (EIP-3009 / Permit2), NOT a transaction hash.
-    //    The real on-chain tx hash is created during settlement, which
-    //    happens AFTER this handler completes. The onAfterSettle hook
-    //    updates the DB record with the real tx hash.
-    let walletAddress = "unknown";
-    const paymentHeader = req.header("payment-signature") || req.header("x-payment");
-    if (paymentHeader) {
-      logger.debug("Payment header present, decoding payer info");
-      try {
-        const decoded = JSON.parse(Buffer.from(paymentHeader, "base64").toString());
-        walletAddress =
-          decoded.payload?.authorization?.from ||
-          decoded.payload?.permit2Authorization?.from ||
-          "unknown";
-        logger.info("Payment authorization from payer", { walletAddress });
-      } catch (err) {
-        logger.warn("Failed to decode payment header (already verified by middleware)", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    } else {
-      logger.warn(
-        "No payment header found on upload request — this should not happen after x402 middleware"
-      );
+    const walletAddress = getPayerFromRequest(req);
+    if (walletAddress !== "unknown") {
+      logger.info("Payment authorization from payer", { walletAddress });
     }
 
     // 5. Determine file name
@@ -256,21 +148,26 @@ export const uploadHandler = async (req: Request, res: Response): Promise<void> 
       });
     }
 
-    // 9. Return CID
+    // 9. Return CID + renewal handle
     logger.info("Upload complete — returning response", {
+      id: fileRecord.id,
       cid: result.cid,
       fileName,
       fileSizeBytes: actualSize,
+      expiresAt: fileRecord.expiresAt,
       walletAddress,
     });
     res.json({
       success: true,
+      id: fileRecord.id,
       cid: result.cid,
       fileName,
       mimeType,
       fileSizeBytes: actualSize,
+      expiresAt: fileRecord.expiresAt,
+      storagePeriodDays: config.storagePeriodDays,
       publicKey: fileRecord.publicKey,
-      ipfsUrl: `https://gateway.lighthouse.storage/ipfs/${result.cid}`,
+      ipfsUrl: `https://gateway-walrus.lighthouse.storage/ipfs/${result.cid}`,
     });
   } catch (error: unknown) {
     await cleanupFile(tempPath);
@@ -290,16 +187,20 @@ export const priceHandler = (req: Request, res: Response): void => {
     return;
   }
 
-  const price = calculatePrice(size);
-  const rawMB = size / (1024 * 1024);
-  const billableMB = Math.max(rawMB, 1);
+  const quote = calculatePriceQuote(size);
 
   res.json({
-    fileSizeBytes: size,
-    fileSizeMB: parseFloat(rawMB.toFixed(4)),
-    billableMB: parseFloat(billableMB.toFixed(4)),
-    pricePerMB: `$${config.pricePerMb}`,
-    totalPrice: price,
+    fileSizeBytes: quote.fileSizeBytes,
+    fileSizeMB: parseFloat((size / (1024 * 1024)).toFixed(4)),
+    walrusEncodedSizeBytes: quote.walrusEncodedSizeBytes,
+    walrusEncodedSizeMiB: parseFloat(quote.walrusEncodedSizeMiB.toFixed(4)),
+    walrusStorageUnits: quote.walrusStorageUnits,
+    storagePlan: `$${quote.storagePriceUsd}/${quote.billingPeriodLabel} for ${quote.storageQuotaGb} GB`,
+    billableMiB: quote.billableMiB,
+    pricePerMiB: `$${quote.pricePerMiB.toFixed(8)}`,
+    facilitatorFee: `$${quote.facilitatorFee.toFixed(6)}`,
+    totalPrice: quote.totalPrice,
+    storagePeriodDays: config.storagePeriodDays,
     network: config.network,
     payTo: config.recipientAddress,
   });

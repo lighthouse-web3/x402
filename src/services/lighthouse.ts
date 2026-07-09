@@ -12,7 +12,7 @@ export async function uploadToLighthouse(filePath: string): Promise<{ cid: strin
 
   const response = await lighthouse.upload(filePath, config.lighthouseApiKey, {
     cidVersion: 1,
-    headers: { storageType: "lifetime" },
+    headers: { storageType: "walrus" },
   });
 
   if (!response?.data?.Hash) {

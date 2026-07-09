@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
+import config from "../config.js";
 import { putFileRecord } from "../db/fileRecord.js";
 
 export interface FileRecord {
@@ -12,6 +13,8 @@ export interface FileRecord {
   dataPartition: string;
   mimeType: string;
   txHash: string;
+  /** Paid-through timestamp (ms). Storage is owed through this instant. */
+  expiresAt: number;
 }
 
 function todayPartition(): string {
@@ -22,6 +25,16 @@ function todayPartition(): string {
   return `${dd}/${mm}/${yyyy}`;
 }
 
+export function storagePeriodMs(): number {
+  return config.storagePeriodDays * 24 * 60 * 60 * 1000;
+}
+
+/** Next paid-through time: stacks on current expiry when still active. */
+export function nextExpiresAt(currentExpiresAt: number, now = Date.now()): number {
+  const base = Math.max(currentExpiresAt || 0, now);
+  return base + storagePeriodMs();
+}
+
 export async function createFileRecord(
   publicKey: string,
   cid: string,
@@ -29,23 +42,21 @@ export async function createFileRecord(
   fileName: string,
   mimeType: string
 ): Promise<FileRecord> {
+  const now = Date.now();
   const fileRecord: FileRecord = {
     id: uuidv4(),
     publicKey: publicKey.toLowerCase(),
-    createdAt: Date.now(),
+    createdAt: now,
     cid: cid,
     fileSizeInBytes: fileSizeBytes,
     fileName: fileName,
-    updatedAt: Date.now(),
+    updatedAt: now,
     dataPartition: todayPartition(),
     mimeType: mimeType,
     txHash: "",
+    expiresAt: nextExpiresAt(0, now),
   };
 
   await putFileRecord(fileRecord);
   return fileRecord;
 }
-
-// export function getFileRecord(publicKey: string): FileRecord | undefined {
-//   return users.get(publicKey.toLowerCase());
-// }

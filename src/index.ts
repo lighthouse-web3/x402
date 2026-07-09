@@ -18,6 +18,8 @@ app.listen(config.port, () => {
   logger.info(`x402 Lighthouse Upload API running on http://localhost:${config.port}`);
   logger.info(`Network: ${config.network}`);
   logger.info(`Recipient: ${config.recipientAddress}`);
-  logger.info(`Price: $${config.pricePerMb} / MB`);
+  logger.info(
+    `Storage plan: $${config.storagePriceUsd}/${config.billingPeriodLabel} for ${config.storageQuotaGb} GB ($${config.pricePerMiB.toFixed(8)}/MiB)`
+  );
   logger.info(`Log level: ${config.logLevel}`);
 });

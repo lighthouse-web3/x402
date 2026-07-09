@@ -1,17 +1,46 @@
 # x402 Lighthouse Upload API
 
-Pay-per-use file upload to [Lighthouse](https://www.lighthouse.storage/) IPFS storage, powered by the [x402](https://docs.cdp.coinbase.com/x402/quickstart-for-sellers) payment protocol. Users pay **$0.004 per MB** in USDC on Base and receive an IPFS CID in return.
+Pay-per-use file storage on [Lighthouse](https://www.lighthouse.storage/) /
+[Walrus](https://www.walrus.xyz/), powered by the
+[x402](https://docs.cdp.coinbase.com/x402/quickstart-for-sellers) payment protocol. Users pay in
+USDC on Base and receive an IPFS CID in return. Storage is sold as a **yearly plan** priced from
+Walrus's *encoded* storage cost, and each file can be **renewed year on year without re-uploading**.
+
+## Pricing
+
+The plan is **$11/month base for 250 GB, billed yearly ($132/year)**:
+
+```
+$11/month × 12 months = $132/year for 250 GB
+= $0.000515625 per MiB per year
+```
+
+| Upload size | Price (1 year) |
+| ----------- | -------------- |
+| 1 MiB (min) | ~$0.00052 + facilitator fee |
+| 1 GiB       | ~$0.529 |
+| 250 GB      | ~$132.00 |
+
+Billing is based on the raw file size in whole MiB (matching the customer-facing 250 GB quota), with
+a 1 MiB minimum. The price quote also reports the Walrus **encoded** size — the erasure-coded size
+Walrus actually bills for (RedStuff ~5x expansion + a fixed ~64 MiB/blob metadata overhead on a
+1000-shard committee) — computed by `src/utils/walrusSize.ts` (ported from
+[`go-ds-s3-walrus/encoding.go`](https://github.com/lighthouse-web3/go-ds-s3-walrus/blob/main/encoding.go)).
+
+To bill monthly instead, set `BILLING_PERIOD_MONTHS=1`, `BILLING_PERIOD_LABEL=month`, and
+`STORAGE_PERIOD_DAYS=30`.
 
 ## How It Works
 
-The server follows the standard **x402 payment protocol** — the first request returns a **402 Payment Required** with pricing details. The client pays on-chain and retries with a payment proof.
+The server follows the standard **x402 payment protocol** — the first request returns a **402
+Payment Required** with pricing details. The client pays on-chain and retries with a payment proof.
 
 ```
 Client                           Server                      Lighthouse
   │                                │                              │
   │  POST /api/upload              │                              │
   │  + file body (no payment)      │                              │
-  │ ─────────────────────────────► │  calculate $0.004 × MB       │
+  │ ─────────────────────────────► │  calculate yearly price      │
   │ ◄───────── 402 Payment Required│                              │
   │    { price, network, payTo }   │                              │
   │                                │                              │
@@ -21,27 +50,31 @@ Client                           Server                      Lighthouse
   │  + PAYMENT-SIGNATURE header    │                              │
   │  + file body                   │                              │
   │ ─────────────────────────────► │  verify & settle payment     │
-  │                                │  create user record          │
+  │                                │  create file record (1 year) │
   │                                │  upload file ──────────────► │
   │                                │ ◄────────── CID              │
-  │ ◄───────────────── 200 { cid } │                              │
+  │ ◄──────────── 200 { id, cid } │                              │
 ```
+
+Each upload includes the **first year** of storage and returns a record `id`. To keep the file
+stored, the owner pays again via `POST /api/renew` (see below), which extends the paid-through date
+by another year — **no file is re-uploaded**.
 
 ### Steps
 
 1. `POST /api/upload` with file body (no payment header) → **402** with price & payment details
 2. Client pays USDC on-chain using the details from the 402 response
-3. `POST /api/upload` with file body + `PAYMENT-SIGNATURE` header → **200** with CID
+3. `POST /api/upload` with file body + `PAYMENT-SIGNATURE` header → **200** with `{ id, cid, expiresAt }`
+4. Before `expiresAt`, `POST /api/renew` with the record `id` + payment → paid-through extended one year
 
 ### Price Check (optional shortcut)
 
-To know the cost before sending the file, use the price endpoint:
+To know the cost before sending the file, use the price endpoints:
 
 ```bash
-GET /api/upload/price?size=<bytes>
+GET /api/upload/price?size=<bytes>   # quote for a new upload
+GET /api/renew/price?id=<recordId>   # quote to renew an existing file
 ```
-
-This returns the exact price for a given file size — useful for showing the cost in a UI before the user commits.
 
 ## Quick Start
 
@@ -71,11 +104,24 @@ NETWORK=eip155:84532
 # x402 facilitator (testnet)
 FACILITATOR_URL=https://www.x402.org/facilitator
 
-# Pricing
-PRICE_PER_MB=0.004
+# Storage plan pricing ($11/month base for 250 GB, billed yearly = $132/year)
+STORAGE_PRICE_USD=11
+STORAGE_QUOTA_GB=250
+BILLING_PERIOD_MONTHS=12
+BILLING_PERIOD_LABEL=year
+STORAGE_PERIOD_DAYS=365
+FACILITATOR_FEE=0.001
+# Optional: override the derived per-MiB (per-period) price
+# PRICE_PER_MB=0.000515625
 
-# Max file size in bytes (default 100 MB)
-MAX_FILE_SIZE_BYTES=104857600
+# Max file size in bytes (default 1 GB)
+MAX_FILE_SIZE_BYTES=1073741824
+
+# AWS / DynamoDB (file records)
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your_aws_access_key_id
+AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+FILE_RECORD_TABLE=files-x402-walrus
 ```
 
 ### 3. Run
@@ -98,7 +144,7 @@ Health check. Returns `OK`.
 
 ### `POST /api/upload`
 
-Upload a file to Lighthouse via x402 payment.
+Upload a file and pay for the first year of storage via x402.
 
 **Without payment** — returns 402 with pricing details:
 
@@ -108,29 +154,7 @@ curl -X POST http://localhost:4021/api/upload \
   --data-binary @photo.png
 ```
 
-**402 response** (contains everything needed to pay):
-
-```json
-{
-  "x402Version": 2,
-  "error": "Payment required",
-  "accepts": [
-    {
-      "scheme": "exact",
-      "network": "eip155:84532",
-      "maxAmountRequired": "20000",
-      "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-      "payTo": "0xYourWalletAddress",
-      "maxTimeoutSeconds": 300
-    }
-  ],
-  "resource": {
-    "description": "Upload file to Lighthouse IPFS storage"
-  }
-}
-```
-
-**With payment** — verifies, settles, uploads, and returns the CID:
+**With payment** — verifies, settles, uploads, and returns the CID + record id:
 
 ```bash
 curl -X POST http://localhost:4021/api/upload \
@@ -142,25 +166,79 @@ curl -X POST http://localhost:4021/api/upload \
 
 **Headers:**
 
-| Header               | Required | Description                              |
-| -------------------- | -------- | ---------------------------------------- |
-| `Content-Type`       | Yes      | `application/octet-stream`               |
-| `Content-Length`      | Yes      | File size in bytes (used for pricing)    |
-| `PAYMENT-SIGNATURE`  | Yes      | x402 payment proof (base64)              |
-| `x-file-name`        | No       | Original file name                       |
+| Header              | Required | Description                           |
+| ------------------- | -------- | ------------------------------------- |
+| `Content-Type`      | Yes      | `application/octet-stream`            |
+| `Content-Length`    | Yes      | File size in bytes (used for pricing) |
+| `PAYMENT-SIGNATURE` | Yes      | x402 payment proof (base64)           |
+| `x-file-name`       | No       | Original file name                    |
 
 **200 response:**
 
 ```json
 {
   "success": true,
+  "id": "8f0c1e2a-...",
   "cid": "QmXoypiz...",
   "fileName": "photo.png",
+  "mimeType": "image/png",
   "fileSizeBytes": 2048000,
-  "walletAddress": "0xPayerAddress",
+  "expiresAt": 1785000000000,
+  "storagePeriodDays": 365,
+  "publicKey": "0xpayeraddress",
   "ipfsUrl": "https://gateway.lighthouse.storage/ipfs/QmXoypiz..."
 }
 ```
+
+Save the `id` — it is required to renew the file later.
+
+---
+
+### `POST /api/renew`
+
+Pay for another year of storage for an existing file. **Does not accept a file body and never
+re-uploads** — it only extends the paid-through date on the existing record. Only the original
+uploader wallet may renew.
+
+**Without payment** — returns 402 with the renewal price (computed from the stored file size):
+
+```bash
+curl -X POST http://localhost:4021/api/renew \
+  -H "x-file-id: 8f0c1e2a-..."
+```
+
+**With payment:**
+
+```bash
+curl -X POST http://localhost:4021/api/renew \
+  -H "x-file-id: 8f0c1e2a-..." \
+  -H "PAYMENT-SIGNATURE: <base64-encoded-payment>"
+```
+
+**Headers:**
+
+| Header              | Required | Description                          |
+| ------------------- | -------- | ------------------------------------ |
+| `x-file-id`         | Yes      | Record `id` returned from the upload |
+| `PAYMENT-SIGNATURE` | Yes      | x402 payment proof (base64)          |
+
+**200 response:**
+
+```json
+{
+  "success": true,
+  "id": "8f0c1e2a-...",
+  "cid": "QmXoypiz...",
+  "fileName": "photo.png",
+  "fileSizeBytes": 2048000,
+  "previousExpiresAt": 1785000000000,
+  "expiresAt": 1816536000000,
+  "storagePeriodDays": 365,
+  "publicKey": "0xpayeraddress"
+}
+```
+
+Renewing early stacks another full year onto the current `expiresAt`.
 
 ---
 
@@ -169,19 +247,30 @@ curl -X POST http://localhost:4021/api/upload \
 Check the price before uploading. No payment required.
 
 ```bash
-curl "http://localhost:4021/api/upload/price?size=5242880"
+curl "http://localhost:4021/api/upload/price?size=1073741824"
 ```
 
 ```json
 {
-  "fileSizeBytes": 5242880,
-  "fileSizeMB": 5,
-  "pricePerMB": "$0.004",
-  "totalPrice": "$0.020000",
+  "fileSizeBytes": 1073741824,
+  "fileSizeMB": 1024,
+  "walrusEncodedSizeBytes": 4888852000,
+  "walrusEncodedSizeMiB": 4662.3726,
+  "walrusStorageUnits": 4663,
+  "storagePlan": "$132/year for 250 GB",
+  "billableMiB": 1024,
+  "pricePerMiB": "$0.00051563",
+  "facilitatorFee": "$0.001000",
+  "totalPrice": "$0.529000",
+  "storagePeriodDays": 365,
   "network": "eip155:84532",
   "payTo": "0xYourWalletAddress"
 }
 ```
+
+### `GET /api/renew/price?id=<recordId>` *(optional helper)*
+
+Same quote shape, priced from the stored file's size, plus `currentExpiresAt`.
 
 ## Project Structure
 
@@ -189,45 +278,90 @@ curl "http://localhost:4021/api/upload/price?size=5242880"
 src/
 ├── index.ts              # Entry point — starts the server
 ├── app.ts                # Express app — routes + middleware wiring
-├── config.ts             # Environment configuration
+├── config.ts             # Environment configuration (pricing, plan, AWS)
+├── payments/
+│   └── server.ts         # x402 resource server, facilitator client, settlement hook
 ├── routes/
-│   └── upload.ts         # x402 middleware, upload handler, price helper
+│   ├── upload.ts         # Upload x402 middleware, handler, price helper
+│   └── renew.ts          # Renew x402 middleware, handler, price helper
 ├── services/
 │   └── lighthouse.ts     # Lighthouse SDK upload wrapper
+├── db/
+│   ├── client.ts         # DynamoDB document client
+│   └── fileRecord.ts     # File record persistence (put/get/renew/query)
 └── utils/
-    ├── pricing.ts        # $0.004/MB price calculation
-    └── users.ts          # Dummy user record (replace with real DB)
+    ├── pricing.ts        # Yearly price calculation
+    ├── walrusSize.ts     # Walrus encoded-size calculator (RS2)
+    ├── fileRecord.ts     # FileRecord type + create + expiry math
+    ├── paymentHeader.ts  # Decode payer wallet from payment header
+    └── logger.ts         # Winston logger
 ```
+
+## File Records
+
+Uploads are persisted to DynamoDB (`FILE_RECORD_TABLE`). Each record carries an `expiresAt`
+paid-through timestamp. Upload sets it one billing period out; `POST /api/renew` extends it from
+`max(now, expiresAt)`.
+
+> **Note:** `expiresAt` tracks what the customer has *paid for*. Extending the actual Walrus blob
+> lifetime on-chain (e.g. via `go-ds-s3-walrus`'s `renew.js`) is a separate operational step driven
+> by records that are paid and nearing `expiresAt`.
+
+### Transaction Hash Lifecycle
+
+Both upload and renew first write the record with `txHash: ""` — this is a **temporary
+placeholder**, not the final value. In the x402 protocol, on-chain settlement happens *after* the
+handler returns its response, so at the moment the record is written the transaction does not exist
+yet and there is no hash to store.
+
+The real value is filled in asynchronously by the `onAfterSettle` hook in `src/payments/server.ts`:
+
+1. The handler stashes `{ recordId }` in an in-memory `pendingSettlements` map, keyed by payer wallet address.
+2. The facilitator settles the payment on-chain.
+3. `onAfterSettle` fires with `context.result.transaction` (the tx hash) and writes it back to the record via `updateFileRecordTxHash`.
+
+Under a normal single upload/renew, the record therefore ends up with a real tx hash a moment after
+the response is sent.
+
+**Known cases where `txHash` can remain `""`:** because `pendingSettlements` is keyed only by wallet
+address and kept in memory:
+
+- **Concurrent payments from the same wallet** — a second upload (or upload + renew) before the first settlement fires overwrites the map entry, so the earlier record never receives its hash.
+- **Server restart** — anything pending between the HTTP response and settlement is lost.
+- **Settlement without a tx hash** — if `context.result.transaction` is empty (e.g. a failed or verify-only settlement), nothing is written.
+
+**Making it reliable:** key the pending map by the payment's unique **nonce**
+(`authorization.nonce` / `permit2Authorization`) instead of the wallet address, so concurrent
+payments no longer collide, and persist that pending mapping (e.g. a small DynamoDB item) instead of
+an in-memory `Map` for restart-durability.
 
 ## Key Design Decisions
 
 | Decision | Rationale |
 |---|---|
 | **Official x402 SDK** (`@x402/express`, `@x402/evm`, `@x402/core`) | Handles 402 responses, payment verification, and settlement via the facilitator — no custom on-chain verification needed. |
-| **Standard 402 flow** | First request returns 402 with the price. Client pays and retries. This is how x402 is designed to work — no custom payment logic needed. |
-| **`DynamicPrice` function** | The SDK supports passing a function for `price` in the route config. We use `Content-Length` to compute per-MB cost on every request. |
-| **Streaming to disk** | The request body is piped directly to a temp file — the full file never sits in memory. Lighthouse SDK reads from the temp file. Safe for large uploads under concurrent load. |
+| **Yearly plan priced from Walrus** | Storage is sold in yearly periods; the quote surfaces the Walrus *encoded* size so pricing reflects real erasure-coded storage cost. |
+| **Renew without re-upload** | `POST /api/renew` extends the paid-through date on the existing record using the stored file size — no bytes are re-sent, and only the original uploader can renew. |
+| **`DynamicPrice` function** | The SDK supports a function for `price` in the route config. Upload prices from `Content-Length`; renew prices from the stored record's size. |
+| **Streaming to disk** | The request body is piped directly to a temp file — the full file never sits in memory. Safe for large uploads under concurrent load. |
 | **Content-Length validation** | After streaming, actual file size is compared against declared `Content-Length`. A mismatch returns 400 and prevents settlement — the user is not charged. |
-| **Direct Lighthouse upload** | Files go straight to IPFS — no intermediate S3 staging or background workers. Simpler and faster. |
-| **Price endpoint** | Optional convenience — lets clients check the cost before sending the file. |
 
 ## Switching to Mainnet
 
 1. Change `NETWORK` to `eip155:8453` (Base mainnet).
-2. Change `FACILITATOR_URL` to `https://api.cdp.coinbase.com/platform/v2/x402` and set up [CDP API keys](https://cdp.coinbase.com).
+2. Change `FACILITATOR_URL` to `https://api.cdp.coinbase.com/platform/v2/x402` and set up [CDP API keys](https://cdp.coinbase.com) (`CDP_API_KEY_ID`, `CDP_API_KEY_SECRET`).
 3. Set `RECIPIENT_ADDRESS` to your mainnet wallet.
 
 See the [x402 mainnet docs](https://docs.cdp.coinbase.com/x402/quickstart-for-sellers#running-on-mainnet) for details.
 
 ## Suggested Improvements
 
-- **Persist user records** — replace the in-memory `Map` in `utils/users.ts` with a real database.
+- **Expiry sweep** — background job to expire/garbage-collect records past `expiresAt` and drive on-chain Walrus renewal for paid files.
 - **Encrypted uploads** — Lighthouse supports [Kavach encryption](https://docs.lighthouse.storage/how-to/upload-data/encrypted-uploads) for privacy-sensitive files.
-- **Batch uploads** — accept multiple files in a single payment transaction.
-- **Upload history** — store CID + wallet mappings so users can retrieve their past uploads.
+- **Upload history endpoint** — expose `getFileRecordsByPublicKey` so users can list their files and expiry dates.
 
 ## References
 
 - [x402 Quickstart for Sellers](https://docs.cdp.coinbase.com/x402/quickstart-for-sellers)
 - [Lighthouse Upload Docs](https://docs.lighthouse.storage/how-to/upload-data/)
-- [Lighthouse x402 Tutorial](https://docs.lighthouse.storage/tutorials/x402-pay-per-use-file-upload)
+- [go-ds-s3-walrus (Walrus datastore + encoded-size formula)](https://github.com/lighthouse-web3/go-ds-s3-walrus)
