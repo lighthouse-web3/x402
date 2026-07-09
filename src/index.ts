@@ -19,7 +19,7 @@ app.listen(config.port, () => {
   logger.info(`Network: ${config.network}`);
   logger.info(`Recipient: ${config.recipientAddress}`);
   logger.info(
-    `Storage plan: $${config.storagePriceUsd}/${config.billingPeriodLabel} for ${config.storageQuotaGb} GB ($${config.pricePerMiB.toFixed(8)}/MiB)`
+    `Storage plan: $${config.pricePerMb}/encoded-MiB/year (+ $${config.facilitatorFee} fee), period ${config.storagePeriodDays} days`
   );
   logger.info(`Log level: ${config.logLevel}`);
 });

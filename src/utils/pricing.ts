@@ -1,53 +1,40 @@
 import config from "../config.js";
-import { STORAGE_UNIT_BYTES, estimateWalrusSize } from "./walrusSize.js";
-
-const MIN_BILLABLE_UNITS = 1;
+import { estimateWalrusSize } from "./walrusSize.js";
 
 export interface PriceQuote {
   fileSizeBytes: number;
-  walrusEncodedSizeBytes: number;
-  walrusStorageUnits: number;
-  walrusEncodedSizeMiB: number;
+  encodedSizeBytes: number;
+  encodedSizeMiB: number;
   billableMiB: number;
-  pricePerMiB: number;
-  storagePriceUsd: number;
-  storageQuotaGb: number;
-  billingPeriodLabel: string;
+  pricePerMb: number;
   facilitatorFee: number;
   totalPriceUsd: number;
   totalPrice: string;
 }
 
-/** Whole MiB billed from raw file size (matches user-facing storage quota). */
-export function rawStorageUnits(fileSizeBytes: number): number {
-  if (fileSizeBytes <= 0) {
-    return 0;
-  }
-  return Math.ceil(fileSizeBytes / STORAGE_UNIT_BYTES);
-}
-
+/**
+ * Yearly price based on the Walrus *encoded* size (what we actually pay Walrus
+ * to store), billed in whole MiB units to avoid fractional-GB rounding:
+ * billableMiB × pricePerMb + facilitatorFee.
+ */
 export function calculatePriceQuote(fileSizeBytes: number): PriceQuote {
-  const walrus = estimateWalrusSize(fileSizeBytes);
-  const billableMiB = Math.max(rawStorageUnits(fileSizeBytes), MIN_BILLABLE_UNITS);
-  const totalPriceUsd = billableMiB * config.pricePerMiB + config.facilitatorFee;
+  const { encodedSizeBytes, encodedSizeMiB, storageUnits } = estimateWalrusSize(fileSizeBytes);
+  const billableMiB = storageUnits;
+  const totalPriceUsd = billableMiB * config.pricePerMb + config.facilitatorFee;
 
   return {
     fileSizeBytes,
-    walrusEncodedSizeBytes: walrus.encodedSizeBytes,
-    walrusStorageUnits: walrus.storageUnits,
-    walrusEncodedSizeMiB: walrus.encodedSizeMiB,
+    encodedSizeBytes,
+    encodedSizeMiB,
     billableMiB,
-    pricePerMiB: config.pricePerMiB,
-    storagePriceUsd: config.storagePriceUsd,
-    storageQuotaGb: config.storageQuotaGb,
-    billingPeriodLabel: config.billingPeriodLabel,
+    pricePerMb: config.pricePerMb,
     facilitatorFee: config.facilitatorFee,
     totalPriceUsd,
     totalPrice: `$${totalPriceUsd.toFixed(6)}`,
   };
 }
 
-/** Returns x402 price string for one billing period (year) at the plan rate. */
+/** Returns the x402 price string for one year of storage. */
 export function calculatePrice(fileSizeBytes: number): string {
   return calculatePriceQuote(fileSizeBytes).totalPrice;
 }

@@ -3,32 +3,39 @@
 Pay-per-use file storage on [Lighthouse](https://www.lighthouse.storage/) /
 [Walrus](https://www.walrus.xyz/), powered by the
 [x402](https://docs.cdp.coinbase.com/x402/quickstart-for-sellers) payment protocol. Users pay in
-USDC on Base and receive an IPFS CID in return. Storage is sold as a **yearly plan** priced from
-Walrus's *encoded* storage cost, and each file can be **renewed year on year without re-uploading**.
+USDC on Base and receive an IPFS CID in return. Storage is priced on Walrus's *encoded* size (what we
+actually pay Walrus to store) for a **one-year** period, and each file can be **renewed year on year
+without re-uploading**.
 
 ## Pricing
 
-The plan is **$11/month base for 250 GB, billed yearly ($132/year)**:
+The price is a flat rate **per MiB of Walrus encoded storage per year**, plus a flat facilitator fee:
 
 ```
-$11/month × 12 months = $132/year for 250 GB
-= $0.000515625 per MiB per year
+totalPrice = billableMiB × PRICE_PER_MB + FACILITATOR_FEE
+
+billableMiB  = ceil(encodedSizeBytes / 1 MiB)   # whole MiB, integer
+PRICE_PER_MB = 0.0005   (default, per encoded MiB per year)
 ```
 
-| Upload size | Price (1 year) |
-| ----------- | -------------- |
-| 1 MiB (min) | ~$0.00052 + facilitator fee |
-| 1 GiB       | ~$0.529 |
-| 250 GB      | ~$132.00 |
+Billing uses the Walrus **encoded** size, not the raw file size, because that is what Walrus charges
+us for: RedStuff erasure coding expands the data (~5x) and adds a fixed ~64 MiB/blob metadata
+overhead on a 1000-shard committee. The encoded size is computed by `src/utils/walrusSize.ts` (ported
+from [`go-ds-s3-walrus/encoding.go`](https://github.com/lighthouse-web3/go-ds-s3-walrus/blob/main/encoding.go)).
+It is billed in **whole MiB units** (matching how Walrus sells storage) so the size term is always an
+integer — no fractional-GB rounding.
 
-Billing is based on the raw file size in whole MiB (matching the customer-facing 250 GB quota), with
-a 1 MiB minimum. The price quote also reports the Walrus **encoded** size — the erasure-coded size
-Walrus actually bills for (RedStuff ~5x expansion + a fixed ~64 MiB/blob metadata overhead on a
-1000-shard committee) — computed by `src/utils/walrusSize.ts` (ported from
-[`go-ds-s3-walrus/encoding.go`](https://github.com/lighthouse-web3/go-ds-s3-walrus/blob/main/encoding.go)).
+| File size | Encoded (whole MiB) | Price (1 year) @ `$0.0005/MiB` |
+| --------- | ------------------- | ------------------------------ |
+| 1 KiB     | 63                  | ~$0.0325 |
+| 5 MiB     | 84                  | ~$0.0430 |
+| 1 GiB     | 4,663               | ~$2.3325 |
+| 10 GiB    | 46,073              | ~$23.0375 |
 
-To bill monthly instead, set `BILLING_PERIOD_MONTHS=1`, `BILLING_PERIOD_LABEL=month`, and
-`STORAGE_PERIOD_DAYS=30`.
+> Note: even a tiny file bills for ~63 MiB because of Walrus's fixed per-blob overhead — this
+> reflects the real Walrus storage cost. Set `PRICE_PER_MB` to your actual per-encoded-MiB rate.
+
+Set `STORAGE_PERIOD_DAYS` to change the storage period granted per payment (default `365`).
 
 ## How It Works
 
@@ -104,15 +111,12 @@ NETWORK=eip155:84532
 # x402 facilitator (testnet)
 FACILITATOR_URL=https://www.x402.org/facilitator
 
-# Storage plan pricing ($11/month base for 250 GB, billed yearly = $132/year)
-STORAGE_PRICE_USD=11
-STORAGE_QUOTA_GB=250
-BILLING_PERIOD_MONTHS=12
-BILLING_PERIOD_LABEL=year
-STORAGE_PERIOD_DAYS=365
+# Yearly price per MiB of Walrus encoded storage (billed in whole MiB units)
+PRICE_PER_MB=0.0005
+# Flat fee added to every payment
 FACILITATOR_FEE=0.001
-# Optional: override the derived per-MiB (per-period) price
-# PRICE_PER_MB=0.000515625
+# Days of storage granted per upload or renew payment (365 = yearly)
+STORAGE_PERIOD_DAYS=365
 
 # Max file size in bytes (default 1 GB)
 MAX_FILE_SIZE_BYTES=1073741824
@@ -254,14 +258,12 @@ curl "http://localhost:4021/api/upload/price?size=1073741824"
 {
   "fileSizeBytes": 1073741824,
   "fileSizeMB": 1024,
-  "walrusEncodedSizeBytes": 4888852000,
-  "walrusEncodedSizeMiB": 4662.3726,
-  "walrusStorageUnits": 4663,
-  "storagePlan": "$132/year for 250 GB",
-  "billableMiB": 1024,
-  "pricePerMiB": "$0.00051563",
+  "encodedSizeBytes": 4888852000,
+  "encodedSizeMiB": 4662.3726,
+  "billableMiB": 4663,
+  "pricePerMB": "$0.0005",
   "facilitatorFee": "$0.001000",
-  "totalPrice": "$0.529000",
+  "totalPrice": "$2.332500",
   "storagePeriodDays": 365,
   "network": "eip155:84532",
   "payTo": "0xYourWalletAddress"
@@ -340,7 +342,7 @@ an in-memory `Map` for restart-durability.
 | Decision | Rationale |
 |---|---|
 | **Official x402 SDK** (`@x402/express`, `@x402/evm`, `@x402/core`) | Handles 402 responses, payment verification, and settlement via the facilitator — no custom on-chain verification needed. |
-| **Yearly plan priced from Walrus** | Storage is sold in yearly periods; the quote surfaces the Walrus *encoded* size so pricing reflects real erasure-coded storage cost. |
+| **Priced on Walrus encoded size, per MiB/year** | We bill what Walrus actually charges us for — the erasure-coded (encoded) size — in whole MiB units (integer, no fractional-GB rounding), for a one-year period. |
 | **Renew without re-upload** | `POST /api/renew` extends the paid-through date on the existing record using the stored file size — no bytes are re-sent, and only the original uploader can renew. |
 | **`DynamicPrice` function** | The SDK supports a function for `price` in the route config. Upload prices from `Content-Length`; renew prices from the stored record's size. |
 | **Streaming to disk** | The request body is piped directly to a temp file — the full file never sits in memory. Safe for large uploads under concurrent load. |

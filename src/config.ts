@@ -21,19 +21,9 @@ const config = {
   facilitatorUrl: process.env.FACILITATOR_URL || "https://www.x402.org/facilitator",
   cdpApiKeyId: process.env.CDP_API_KEY_ID || "",
   cdpApiKeySecret: process.env.CDP_API_KEY_SECRET || "",
-  // Walrus storage plan: $11/month base for 250 GB, billed yearly ($132/year).
-  // storagePriceUsd is the amount charged per billing period (year).
-  storagePriceUsd:
-    parseFloat(process.env.STORAGE_PRICE_USD || "11") *
-    parseInt(process.env.BILLING_PERIOD_MONTHS || "12"),
-  storageQuotaGb: parseFloat(process.env.STORAGE_QUOTA_GB || "250"),
-  billingPeriodLabel: process.env.BILLING_PERIOD_LABEL || "year",
-  // Per-MiB price for the whole billing period (overridable via PRICE_PER_MB).
-  pricePerMiB: process.env.PRICE_PER_MB
-    ? parseFloat(process.env.PRICE_PER_MB)
-    : (parseFloat(process.env.STORAGE_PRICE_USD || "11") *
-        parseInt(process.env.BILLING_PERIOD_MONTHS || "12")) /
-      (parseFloat(process.env.STORAGE_QUOTA_GB || "250") * 1024),
+  // Yearly price per MiB of Walrus *encoded* storage (what we pay Walrus for).
+  // Billed in whole MiB units to avoid fractional-GB rounding errors.
+  pricePerMb: parseFloat(process.env.PRICE_PER_MB || "0.0005"),
   facilitatorFee: parseFloat(process.env.FACILITATOR_FEE || "0.001"),
   /** Days of storage granted per upload or renew payment. */
   storagePeriodDays: parseInt(process.env.STORAGE_PERIOD_DAYS || "365"),
