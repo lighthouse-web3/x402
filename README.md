@@ -302,40 +302,39 @@ src/
 ## File Records
 
 Uploads are persisted to DynamoDB (`FILE_RECORD_TABLE`). Each record carries an `expiresAt`
-paid-through timestamp. Upload sets it one billing period out; `POST /api/renew` extends it from
+paid-through timestamp. It starts at `0` (unpaid) and is only set once the payment **settles
+on-chain**: upload stamps it one billing period out; `POST /api/renew` extends it atomically from
 `max(now, expiresAt)`.
 
 > **Note:** `expiresAt` tracks what the customer has *paid for*. Extending the actual Walrus blob
 > lifetime on-chain (e.g. via `go-ds-s3-walrus`'s `renew.js`) is a separate operational step driven
 > by records that are paid and nearing `expiresAt`.
 
-### Transaction Hash Lifecycle
+### Payment Settlement Lifecycle
 
-Both upload and renew first write the record with `txHash: ""` — this is a **temporary
-placeholder**, not the final value. In the x402 protocol, on-chain settlement happens *after* the
-handler returns its response, so at the moment the record is written the transaction does not exist
-yet and there is no hash to store.
+The x402 middleware **buffers the handler's response and settles the payment before flushing it**.
+This means the DB write granting storage can — and does — wait for settlement:
 
-The real value is filled in asynchronously by the `onAfterSettle` hook in `src/payments/server.ts`:
+1. The handler does its work (upload: streams + uploads the file and writes the record with
+   `txHash: ""`, `expiresAt: 0`; renew: just validates ownership) and registers a pending
+   settlement in an in-memory map, keyed by **payer + payment nonce**
+   (`authorization.nonce` / `permit2Authorization`), so concurrent payments from one wallet never
+   collide.
+2. The middleware settles the payment with the facilitator. If settlement **fails**, the buffered
+   200 is discarded, the client receives a **402**, and the record keeps `expiresAt: 0` — a failed
+   payment can never leave a record showing paid storage.
+3. On success, the `onAfterSettle` hook in `src/payments/server.ts` writes the real tx hash and the
+   new `expiresAt` (upload: first period; renew: conditional-update extend with retry), then the
+   buffered 200 is flushed to the client.
 
-1. The handler stashes `{ recordId }` in an in-memory `pendingSettlements` map, keyed by payer wallet address.
-2. The facilitator settles the payment on-chain.
-3. `onAfterSettle` fires with `context.result.transaction` (the tx hash) and writes it back to the record via `updateFileRecordTxHash`.
+**Known gaps** (logged loudly for reconciliation):
 
-Under a normal single upload/renew, the record therefore ends up with a real tx hash a moment after
-the response is sent.
-
-**Known cases where `txHash` can remain `""`:** because `pendingSettlements` is keyed only by wallet
-address and kept in memory:
-
-- **Concurrent payments from the same wallet** — a second upload (or upload + renew) before the first settlement fires overwrites the map entry, so the earlier record never receives its hash.
-- **Server restart** — anything pending between the HTTP response and settlement is lost.
-- **Settlement without a tx hash** — if `context.result.transaction` is empty (e.g. a failed or verify-only settlement), nothing is written.
-
-**Making it reliable:** key the pending map by the payment's unique **nonce**
-(`authorization.nonce` / `permit2Authorization`) instead of the wallet address, so concurrent
-payments no longer collide, and persist that pending mapping (e.g. a small DynamoDB item) instead of
-an in-memory `Map` for restart-durability.
+- **Server restart** between handler and settlement loses the in-memory pending entry — persist the
+  map (e.g. a small DynamoDB item) for restart-durability.
+- **Settled but DB write failed** — the hook never throws (that would turn a successful payment
+  into a client-facing 402); it logs `PAYMENT RECONCILIATION NEEDED` with the record id and tx hash.
+- **Upload settle failure after the blob reached Lighthouse** — the file exists on Walrus but its
+  record is unpaid (`expiresAt: 0`); the expiry sweep can garbage-collect these.
 
 ## Key Design Decisions
 
@@ -347,6 +346,8 @@ an in-memory `Map` for restart-durability.
 | **`DynamicPrice` function** | The SDK supports a function for `price` in the route config. Upload prices from `Content-Length`; renew prices from the stored record's size. |
 | **Streaming to disk** | The request body is piped directly to a temp file — the full file never sits in memory. Safe for large uploads under concurrent load. |
 | **Content-Length validation** | After streaming, actual file size is compared against declared `Content-Length`. A mismatch returns 400 and prevents settlement — the user is not charged. |
+| **Preflight before payment** | Cheap validation middleware (`uploadPreflight`, `renewPreflight`) runs *before* the x402 middleware, so clients get a clean 400/404/413 instead of signing a payment for a doomed request. |
+| **Storage granted only after settlement** | Records are written unpaid; the `onAfterSettle` hook stamps `txHash` + `expiresAt` once the money has moved. Failed settlement → client gets 402, record stays unpaid. |
 
 ## Switching to Mainnet
 

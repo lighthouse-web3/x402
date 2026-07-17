@@ -18,6 +18,9 @@ export interface PriceQuote {
  * billableMiB × pricePerMb + facilitatorFee.
  */
 export function calculatePriceQuote(fileSizeBytes: number): PriceQuote {
+  if (!Number.isFinite(fileSizeBytes) || fileSizeBytes < 0) {
+    throw new Error(`Invalid file size for pricing: ${fileSizeBytes}`);
+  }
   const { encodedSizeBytes, encodedSizeMiB, storageUnits } = estimateWalrusSize(fileSizeBytes);
   const billableMiB = storageUnits;
   const totalPriceUsd = billableMiB * config.pricePerMb + config.facilitatorFee;

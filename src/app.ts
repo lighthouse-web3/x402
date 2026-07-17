@@ -1,8 +1,13 @@
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import logger from "./utils/logger.js";
-import { x402Middleware, uploadHandler, priceHandler } from "./routes/upload.js";
-import { x402RenewMiddleware, renewHandler, renewPriceHandler } from "./routes/renew.js";
+import { x402Middleware, uploadPreflight, uploadHandler, priceHandler } from "./routes/upload.js";
+import {
+  x402RenewMiddleware,
+  renewPreflight,
+  renewHandler,
+  renewPriceHandler,
+} from "./routes/renew.js";
 
 const app = express();
 
@@ -37,9 +42,9 @@ app.get("/health", (_req: Request, res: Response) => {
 });
 
 app.get("/api/upload/price", priceHandler);
-app.post("/api/upload", x402Middleware, uploadHandler);
+app.post("/api/upload", uploadPreflight, x402Middleware, uploadHandler);
 
 app.get("/api/renew/price", renewPriceHandler);
-app.post("/api/renew", x402RenewMiddleware, renewHandler);
+app.post("/api/renew", renewPreflight, x402RenewMiddleware, renewHandler);
 
 export default app;
