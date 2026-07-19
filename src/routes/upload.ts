@@ -191,6 +191,7 @@ export const uploadHandler = async (req: Request, res: Response): Promise<void> 
       expiresAt,
       storagePeriodDays: config.storagePeriodDays,
       publicKey: fileRecord.publicKey,
+      fileState: fileRecord.fileState,
       ipfsUrl: `https://gateway-walrus.lighthouse.storage/ipfs/${result.cid}`,
     });
   } catch (error: unknown) {

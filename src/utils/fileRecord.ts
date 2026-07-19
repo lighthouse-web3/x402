@@ -2,6 +2,17 @@ import { v4 as uuidv4 } from "uuid";
 import config from "../config.js";
 import { putFileRecord } from "../db/fileRecord.js";
 
+/**
+ * Lifecycle state used to coordinate the out-of-band Walrus renewal worker.
+ * - `to-extend`: a fresh upload settled and its blob's initial on-chain lifetime
+ *   still needs to be extended. The worker picks these up first.
+ * - `renew`: a renewal payment settled and the blob's on-chain lifetime needs to
+ *   be extended again.
+ * - `active`: file is live; no pending on-chain extension work. The renewal
+ *   worker (a separate microservice) sets this once the on-chain extension is done.
+ */
+export type FileState = "to-extend" | "renew" | "active";
+
 export interface FileRecord {
   id: string;
   publicKey: string;
@@ -19,6 +30,8 @@ export interface FileRecord {
    * and marked paid by the onAfterSettle hook once the payment lands on-chain.
    */
   expiresAt: number;
+  /** Renewal-worker coordination flag. See FileState. */
+  fileState: FileState;
 }
 
 function todayPartition(): string {
@@ -59,6 +72,7 @@ export async function createFileRecord(
     mimeType: mimeType,
     txHash: "",
     expiresAt: 0,
+    fileState: "to-extend",
   };
 
   await putFileRecord(fileRecord);

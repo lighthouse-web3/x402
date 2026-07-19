@@ -3,7 +3,7 @@ import { GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/li
 import docClient from "./client.js";
 import config from "../config.js";
 import logger from "../utils/logger.js";
-import { FileRecord, nextExpiresAt } from "../utils/fileRecord.js";
+import { FileRecord, FileState, nextExpiresAt } from "../utils/fileRecord.js";
 
 export async function putFileRecord(record: FileRecord): Promise<void> {
   logger.debug("Saving file record to DynamoDB", { id: record.id, cid: record.cid });
@@ -58,11 +58,16 @@ export async function markFileRecordPaid(
 const EXTEND_RETRIES = 3;
 
 /**
- * Extend a record's paid-through expiry by one storage period, atomically.
+ * Extend a record's paid-through expiry by one storage period, atomically, and
+ * flag it for the renewal worker by setting fileState = "renew".
  *
  * Uses a conditional update on the current expiresAt so two concurrent renewals
  * can never collapse into a single extension — each settled payment stacks one
  * full period. Returns the new expiresAt.
+ *
+ * The "renew" flag tells the out-of-band renewal worker (a separate
+ * microservice) that this blob's on-chain Walrus lifetime still needs
+ * extending; that service flips the record back to "active" when done.
  */
 export async function extendFileRecordExpiry(recordId: string, txHash: string): Promise<number> {
   for (let attempt = 1; attempt <= EXTEND_RETRIES; attempt++) {
@@ -80,17 +85,23 @@ export async function extendFileRecordExpiry(recordId: string, txHash: string): 
         new UpdateCommand({
           TableName: config.fileRecordTable,
           Key: { id: recordId },
-          UpdateExpression: "SET expiresAt = :exp, updatedAt = :now, txHash = :tx",
+          UpdateExpression:
+            "SET expiresAt = :exp, updatedAt = :now, txHash = :tx, fileState = :state",
           ConditionExpression: "expiresAt = :prev OR attribute_not_exists(expiresAt)",
           ExpressionAttributeValues: {
             ":exp": expiresAt,
             ":now": now,
             ":tx": txHash,
+            ":state": "renew" satisfies FileState,
             ":prev": currentExpiresAt,
           },
         })
       );
-      logger.debug("File record expiry extended", { recordId, expiresAt, txHash });
+      logger.debug("File record expiry extended, marked for renewal", {
+        recordId,
+        expiresAt,
+        txHash,
+      });
       return expiresAt;
     } catch (err) {
       if (err instanceof ConditionalCheckFailedException && attempt < EXTEND_RETRIES) {
