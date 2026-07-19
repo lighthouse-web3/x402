@@ -32,6 +32,8 @@ const config = {
   // AWS / DynamoDB
   awsRegion: process.env.AWS_REGION || "us-east-1",
   fileRecordTable: process.env.FILE_RECORD_TABLE || "files-x402-walrus",
+  /** GSI on the file record table with publicKey as partition key (for upload history). */
+  publicKeyIndexName: process.env.FILE_RECORD_PUBLIC_KEY_INDEX || "publicKey-index",
   aws_access_key_id: process.env.AWS_ACCESS_KEY_ID || "",
   aws_secret_access_key: process.env.AWS_SECRET_ACCESS_KEY || "",
 };

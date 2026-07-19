@@ -1,10 +1,35 @@
-import { Request, Response } from "express";
+import { Request, Response, NextFunction } from "express";
 import config from "../config.js";
 import logger from "../utils/logger.js";
 import { calculatePrice, calculatePriceQuote } from "../utils/pricing.js";
-import { getPayerFromRequest } from "../utils/paymentHeader.js";
-import { getFileRecordById, renewFileRecord } from "../db/fileRecord.js";
-import { createPaymentMiddleware, network, pendingSettlements } from "../payments/server.js";
+import { getPaymentIdentity } from "../utils/paymentHeader.js";
+import { getFileRecordById } from "../db/fileRecord.js";
+import { nextExpiresAt } from "../utils/fileRecord.js";
+import { createPaymentMiddleware, network, registerPendingSettlement } from "../payments/server.js";
+
+/**
+ * Validates the renew target before the x402 middleware quotes a price, so
+ * clients get a clean 400/404 instead of signing a payment for a doomed request.
+ */
+export const renewPreflight = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  const fileId = (req.headers["x-file-id"] as string | undefined)?.trim() || "";
+  if (!fileId) {
+    res.status(400).json({ error: "x-file-id header is required" });
+    return;
+  }
+
+  const record = await getFileRecordById(fileId);
+  if (!record) {
+    res.status(404).json({ error: "File record not found", id: fileId });
+    return;
+  }
+
+  next();
+};
 
 export const x402RenewMiddleware = createPaymentMiddleware({
   "POST /api/renew": {
@@ -53,8 +78,8 @@ export const renewHandler = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
-    const walletAddress = getPayerFromRequest(req);
-    if (walletAddress === "unknown" || walletAddress.toLowerCase() !== record.publicKey) {
+    const { payer: walletAddress, paymentKey } = getPaymentIdentity(req);
+    if (walletAddress === "unknown" || walletAddress !== record.publicKey) {
       logger.warn("Renew rejected: payer does not own file", {
         fileId,
         walletAddress,
@@ -67,32 +92,36 @@ export const renewHandler = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
+    // No DB write here. The x402 middleware settles the payment before this
+    // (buffered) response is flushed; the onAfterSettle hook then extends the
+    // expiry atomically. If settlement fails, the client gets a 402 and the
+    // expiry is untouched — a failed payment can never grant storage.
     const previousExpiresAt = record.expiresAt ?? 0;
-    const renewed = await renewFileRecord(record);
+    const expiresAt = nextExpiresAt(previousExpiresAt);
 
-    pendingSettlements.set(walletAddress.toLowerCase(), {
-      recordId: renewed.id,
-      publicKey: renewed.publicKey,
+    registerPendingSettlement(paymentKey, {
+      kind: "renew",
+      recordId: record.id,
     });
 
-    logger.info("File storage renewed", {
-      id: renewed.id,
-      cid: renewed.cid,
+    logger.info("File storage renewal pending settlement", {
+      id: record.id,
+      cid: record.cid,
       previousExpiresAt,
-      expiresAt: renewed.expiresAt,
+      expiresAt,
       walletAddress,
     });
 
     res.json({
       success: true,
-      id: renewed.id,
-      cid: renewed.cid,
-      fileName: renewed.fileName,
-      fileSizeBytes: renewed.fileSizeInBytes,
+      id: record.id,
+      cid: record.cid,
+      fileName: record.fileName,
+      fileSizeBytes: record.fileSizeInBytes,
       previousExpiresAt,
-      expiresAt: renewed.expiresAt,
+      expiresAt,
       storagePeriodDays: config.storagePeriodDays,
-      publicKey: renewed.publicKey,
+      publicKey: record.publicKey,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Renew failed";

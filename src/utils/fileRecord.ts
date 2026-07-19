@@ -13,7 +13,11 @@ export interface FileRecord {
   dataPartition: string;
   mimeType: string;
   txHash: string;
-  /** Paid-through timestamp (ms). Storage is owed through this instant. */
+  /**
+   * Paid-through timestamp (ms). Storage is owed through this instant.
+   * 0 means no settled payment yet — the record is created before settlement
+   * and marked paid by the onAfterSettle hook once the payment lands on-chain.
+   */
   expiresAt: number;
 }
 
@@ -54,7 +58,7 @@ export async function createFileRecord(
     dataPartition: todayPartition(),
     mimeType: mimeType,
     txHash: "",
-    expiresAt: nextExpiresAt(0, now),
+    expiresAt: 0,
   };
 
   await putFileRecord(fileRecord);
