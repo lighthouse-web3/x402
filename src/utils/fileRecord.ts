@@ -46,9 +46,37 @@ export function storagePeriodMs(): number {
   return config.storagePeriodDays * 24 * 60 * 60 * 1000;
 }
 
+/**
+ * Normalize a paid-through value to a numeric ms epoch.
+ *
+ * Records are supposed to hold `expiresAt` as a ms-epoch number, but some rows
+ * (e.g. written by the separate renewal microservice) store it as an ISO date
+ * string. Coercing here keeps the expiry math from producing `NaN`, which
+ * DynamoDB rejects ("Special numeric value NaN is not allowed").
+ */
+export function toEpochMs(value: number | string | null | undefined): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber)) {
+      return asNumber;
+    }
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return 0;
+}
+
 /** Next paid-through time: stacks on current expiry when still active. */
-export function nextExpiresAt(currentExpiresAt: number, now = Date.now()): number {
-  const base = Math.max(currentExpiresAt || 0, now);
+export function nextExpiresAt(
+  currentExpiresAt: number | string | null | undefined,
+  now = Date.now()
+): number {
+  const base = Math.max(toEpochMs(currentExpiresAt), now);
   return base + storagePeriodMs();
 }
 
